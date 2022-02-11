@@ -1,0 +1,210 @@
+MPASM 5.87                      UART_LIB.ASM   1-16-2021  22:55:50         PAGE  1
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00001 #DEFINE  TX_EN  bsf     TXSTA,TXEN      ;habilitar transmisión (banco 1)
+                      00002 #DEFINE  TX_DIS bcf     TXSTA,TXEN      ;deshabilitar transmisión (banco 1)
+                      00003 
+                      00004 #DEFINE  RX_EN  bsf     RCSTA,CREN      ;habilitar transmisión (banco 0)
+                      00005 #DEFINE  RX_DIS bcf     RCSTA,CREN      ;deshabilitar transmisión (banco 0)     
+                      00006         
+                      00007 #DEFINE  SC_EN  bsf     RCSTA,SPEN      ;habilitar comunicación serial (banco 0)
+                      00008     
+                      00009 ;inicializar UART
+Error[150]  : Labels must be defined in a code or data section when making an object file
+0000                  00010 INIT_UART
+Error[113]  : Symbol not previously defined (STATUS)
+Error[113]  : Symbol not previously defined (RP1)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00011         bcf     STATUS,RP1      
+Error[113]  : Symbol not previously defined (STATUS)
+Error[113]  : Symbol not previously defined (RP0)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00012         bsf     STATUS,RP0      ;selecciona banco 1
+                      00013                 
+                      00014         ;RC6:Tx y RC7:Rx <- setearlos según la hoja de datos
+                      00015         ;movlw  0xC0
+                      00016         ;movwf  TRISC
+                      00017         
+Error[113]  : Symbol not previously defined (TRISC)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00018         bsf     TRISC,6
+Error[113]  : Symbol not previously defined (TRISC)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00019         bsf     TRISC,7
+                      00020         
+                      00021         ;configurar baud rate
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00022         movlw   .129            ;129 a BRG (baud rate 9600)
+Error[113]  : Symbol not previously defined (SPBRG)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00023         movwf   SPBRG
+                      00024         
+                      00025         ;configurar TXSTA (banco 1)... también le puedo mandar un A4h
+                      00026         ;bcf    TXSTA,TX9       ;modo 8 bits
+                      00027         ;bcf    TXSTA,SYNC      ;modo asíncrono
+                      00028         ;bsf    TXSTA,BRGH      ;high speed
+                      00029         ;TX_EN                  ;habilitar transmisión
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00030         movlw   b'10100100'
+Error[113]  : Symbol not previously defined (TXSTA)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00031         movwf   TXSTA
+                      00032         
+Error[113]  : Symbol not previously defined (STATUS)
+Error[113]  : Symbol not previously defined (RP0)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00033         bcf     STATUS,RP0      ;banco 0
+MPASM 5.87                      UART_LIB.ASM   1-16-2021  22:55:50         PAGE  2
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00034         ;SC_EN                  ;habilitar comunicación serial
+Error[113]  : Symbol not previously defined (RCSTA)
+Error[113]  : Symbol not previously defined (CREN)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00035         RX_EN                   ;habilitar recepción
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00036         movlw   b'10010000'     
+Error[113]  : Symbol not previously defined (RCSTA)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00037         movwf   RCSTA
+                      00038         
+Error[113]  : Symbol not previously defined (PIR1)
+Error[113]  : Symbol not previously defined (RCIF)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00039         bcf     PIR1,RCIF; LIMPIAMOS FLAG RX
+                      00040         
+                      00041         ;le puedo enviar un 90h a RCSTA (habilitando la comunicación serial])
+                      00042 
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00043         return
+                      00044         
+Error[150]  : Labels must be defined in a code or data section when making an object file
+0000                  00045 UART_ENVIAR
+                      00046         ;solo para enviar un byte de datos
+                      00047         ;en un loop podemos enviar varios de estos con esta funcion y una tabla de datos
+                      00048         
+                      00049         ;tengo que esperar a que se TXIF esté en 1 para regresar
+                      00050         ;si TXIF (PIR1...bk0) está en 1 significa TXREG ya está vacío
+                      00051         ;le transmitió todo a TSR
+                      00052         ;TXREG (bk0)
+                      00053         ;supongo que no tengo que poner txen o deshabilitarlo
+                      00054         
+Error[113]  : Symbol not previously defined (STATUS)
+Error[113]  : Symbol not previously defined (RP0)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00055         bcf     STATUS,RP0
+                      00056         
+Error[150]  : Labels must be defined in a code or data section when making an object file
+Error[113]  : Symbol not previously defined (PIR1)
+Error[113]  : Symbol not previously defined (TXIF)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00057 wtT     btfss   PIR1,TXIF       ;TXREG vacío?
+Error[151]  : Operand contains unresolvable labels or is too complex
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00058         goto    wtT                     ;no
+                      00059         
+                      00060         ;movfw  varTx           ;mover contenido de variable a W
+Error[113]  : Symbol not previously defined (TXREG)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00061         movwf   TXREG           ;mover a txreg
+                      00062         
+                      00063 
+                      00064         ;no sé si checar TRMT para checar si la transmisión ya fue completada: esperar a que esté empty 
+MPASM 5.87                      UART_LIB.ASM   1-16-2021  22:55:50         PAGE  3
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                            (0)
+                      00065         ;y ya desúés salir de la subrutina
+                      00066         ;pero tal vez tenga que poner un pequeño retardo
+                      00067         
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00068         return
+                      00069         
+Error[150]  : Labels must be defined in a code or data section when making an object file
+0000                  00070 UART_RECIBIR
+                      00071         ;tal vez cheque rcif afuera.. ya que tal vez después lo haga con interrupciones
+                      00072         ;lo que sea que recibí lo voy a poner en W
+                      00073         
+                      00074         ;primero veo si hay overrun error
+Error[113]  : Symbol not previously defined (STATUS)
+Error[113]  : Symbol not previously defined (RP0)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00075         bcf     STATUS,RP0                      ;banco 0
+                      00076         
+Error[113]  : Symbol not previously defined (RCSTA)
+Error[113]  : Symbol not previously defined (OERR)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00077         btfsc   RCSTA,OERR      ;hay overrun error?
+Error[151]  : Operand contains unresolvable labels or is too complex
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00078         call    RX_OERR         ;sí-> desactivar error
+                      00079         
+Error[113]  : Symbol not previously defined (RCREG)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00080         movfw   RCREG                   ;no->lo que sea que recibí lo pongo en W
+                      00081         ;se supone que al leer rcreg rcif debe de limpiarse al leer rcreg...creo
+                      00082         ;movwf  PORTB
+                      00083         ;mejor pongo lo que recibí en la variable varRX
+Error[113]  : Symbol not previously defined (varRx)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00084         movwf   varRx
+                      00085         
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00086         return
+                      00087         
+                      00088         
+Error[150]  : Labels must be defined in a code or data section when making an object file
+0000                  00089 RX_OERR 
+                      00090         ;si hay overrun error, hay que resetear CREN
+                      00091         
+Error[113]  : Symbol not previously defined (RCSTA)
+Error[113]  : Symbol not previously defined (CREN)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00092         RX_DIS
+Error[113]  : Symbol not previously defined (RCSTA)
+Error[113]  : Symbol not previously defined (CREN)
+Error[152]  : Executable code and data must be defined in an appropriate section
+0000                  00093         RX_EN
+Error[152]  : Executable code and data must be defined in an appropriate section
+MPASM 5.87                      UART_LIB.ASM   1-16-2021  22:55:50         PAGE  4
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0000                  00094         return
+                      00095 
+                      00096 
+Error[129]  : Expected (END)
+MPASM 5.87                      UART_LIB.ASM   1-16-2021  22:55:50         PAGE  5
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+INIT_UART                         00000000
+RX_DIS                            bcf     RCSTA,CREN
+RX_EN                             bsf     RCSTA,CREN
+RX_OERR                           00000000
+SC_EN                             bsf     RCSTA,SPEN
+TX_DIS                            bcf     TXSTA,TXEN
+TX_EN                             bsf     TXSTA,TXEN
+UART_ENVIAR                       00000000
+UART_RECIBIR                      00000000
+__16F877A                         00000001
+wtT                               00000000
+
+Errors   :    66
+Warnings :     0 reported,     0 suppressed
+Messages :     0 reported,     0 suppressed
+
+

@@ -1,0 +1,2186 @@
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE  1
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00001 ;**********************************************************************
+                      00002 ;                                                                     *
+                      00003 ;    Archivo:       Kbd_Lcd.asm                                       *
+                      00004 ;    Fecha:         091203                                            *
+                      00005 ;    Versión:       01.0                                              *
+                      00006 ;                                                                     *
+                      00007 ;    Autor:         OFNO                                              *
+                      00008 ;    Materia:       Sistemas basados en Microcontroladores            *
+                      00009 ;                                                                     * 
+                      00010 ;**********************************************************************
+                      00011 ;                                                                     *
+                      00012 ;    Archivos requeridos: p16F877A.inc                                *
+                      00013 ;                         LCD_CXX.ASM                                 *
+                      00014 ;                         KBD_CXX.ASM                                 *
+                      00015 ;                                                                     *
+                      00016 ;**********************************************************************
+                      00017 ;                                                                     *
+                      00018 ;    Notas: Lee el teclado y despliega en pantalla el caracter        *
+                      00019 ;                                                                     *
+                      00020 ;**********************************************************************
+                      00021 
+                      00022         list      p=16F877A                     ; Indica el modelo de PIC que se usa
+                      00023                                                 ; Es una directiva de ensamblador
+                      00024         #include "p16f877a.inc"
+                      00001         LIST
+                      00002 
+                      00003 ;==========================================================================
+                      00004 ; Build date : Jan 06 2020
+                      00005 ;  MPASM PIC16F877A processor include
+                      00006 ; 
+                      00007 ;  (c) Copyright 1999-2020 Microchip Technology, All rights reserved
+                      00008 ;==========================================================================
+                      00009 
+                      00567         LIST
+                      00025         #include <macros_alarma.inc>
+                      00001 bank0       MACRO                       ;macro to select data RAM bank 0
+                      00002             bcf STATUS,RP0
+                      00003             bcf STATUS,RP1
+                      00004             ENDM
+                      00005 
+                      00006 bank1       MACRO                       ;macro to select data RAM bank 1
+                      00007             bsf STATUS,RP0
+                      00008             bcf STATUS,RP1
+                      00009             ENDM
+                      00010         
+                      00011         
+                      00012 movlf       MACRO   const,varReg
+                      00013 ;mover constante a registro
+                      00014             movlw   const
+                      00015             movwf   varReg
+                      00016 
+                      00017             ENDM
+                      00018             
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE  2
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00019 movff       MACRO   original,destino
+                      00020 ;mover constante a registro
+                      00021             movfw   original
+                      00022             movwf   destino
+                      00023 
+                      00024             ENDM
+                      00025         
+                      00026 prenderX    MACRO   pin
+                      00027 ;prender pin del puerto B
+                      00028             bsf     PORTB,pin           ;ya sabemos que todos los pines están en B
+                      00029             
+                      00030             ENDM
+                      00031             
+                      00032 comparar    MACRO   num1,num2, Ltrue, Lfalse
+                      00033 ;saber si son iguales  
+                      00034             movfw   num1
+                      00035             subwf   num2,W
+                      00036             
+                      00037             btfss           STATUS, Z
+                      00038             goto            Lfalse
+                      00039         
+                      00040             goto            Ltrue
+                      00041 
+                      00042             ENDM
+                      00043             
+                      00044 
+                      00045 
+                      00046             
+                      00047 read_arr   MACRO   arreglo, elemento,numx
+                      00048 ;solo es para leer el elemento I del arreglo        
+                      00049             movlw   arreglo     ;dirección del elemento 1 del arreglo
+                      00050             addwf   elemento,W  ;dirección del elemento i-ésimo gaurdada en W
+                      00051             movwf   FSR         ;ahora ya estoy apuntando a ese elemento
+                      00052             
+                      00053             movfw   INDF
+                      00054             movwf   numx
+                      00055             
+                      00056             ENDM
+                      00057             
+                      00058 write_arr   MACRO   arreglo, elementoCont,var
+                      00059             ;Arreglo es el apuntador/dirección del arreglo
+                      00060             ;elemento es el contador de cuátos escribió
+                      00061             ;var es la variable desde la cual va a leer y poner en INDF
+                      00062             
+                      00063             movlw   arreglo         ;dirección del elemento 1 del arreglo
+                      00064             addwf   elementoCont,W  ;dirección del elemento i guardada en W
+                      00065             movwf   FSR             ;ahora ya estoy apuntando a ese elemento
+                      00066 
+                      00067             ;aqui quiero escribir en indf el código ascii de la letra
+                      00068             movfw   var
+                      00069             movwf   INDF            ;estoy escribiendo en INDF
+                      00070 
+                      00071             incf    elementoCont,f  ;está listo para escribir en el sig elemento
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE  3
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00072             
+                      00073             ENDM
+                      00074             
+                      00075 msg_cte     MACRO   posicion,TABLA_MSG
+                      00076             
+                      00077 ;0x80: primera fila
+                      00078 ;0xC0:segunda fila
+                      00079             
+                      00080 ;va a desplegar un mensaje constante, dada la tabla que contiene los caracteres
+                      00081 ;después de despleagrlo, se va a la primera posicion de segunda fila
+                      00082             
+                      00083 ;DATO es una variable definida en el main
+                      00084             local   LAZO
+                      00085             local   FINMEN
+                      00086             
+                      00087             ;call       BORRA_Y_HOME
+                      00088             movlw       posicion
+                      00089             call        LCD_REG
+                      00090             
+                      00091             movlw       0x00            ; Despliega mensaje
+                      00092             movwf       DATO
+                      00093 LAZO        call        TABLA_MSG
+                      00094             iorlw       0x00
+                      00095             btfsc       STATUS,Z
+                      00096             goto        FINMEN
+                      00097             call        LCD_DATO
+                      00098             incf        DATO,F
+                      00099             goto        LAZO
+                      00100 
+                      00101 FINMEN      movlw       0xC0            ; Primera posición de segunda fila
+                      00102             call        LCD_REG
+                      00103             
+                      00104             ENDM
+                      00105             
+                      00106             
+                      00107 mdelay      MACRO       veces_delay
+                      00108                     
+                      00109             local       delayaso
+                      00110                    
+                      00111             movlw       veces_delay
+                      00112             movwf       CONTDEL
+                      00113                 
+                      00114                     
+                      00115 delayaso    call        DELAY
+                      00116             decfsz      CONTDEL,f
+                      00117             goto        delayaso
+                      00118                     
+                      00119             ENDM
+                      00120             
+                      00026 
+                      00027 ; CONFIG
+                      00028 ; __config 0xFF72
+                      00029 ; __CONFIG _HS_OSC & _WDT_OFF & _PWRTE_ON & _BODEN_ON & _LVP_OFF & _CPD_OFF & _WRT_OFF & _CP_OFF
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE  4
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00030         
+2007   3F72           00031         __CONFIG _FOSC_HS & _WDTE_OFF & _PWRTE_ON & _BOREN_ON & _LVP_OFF & _CPD_OFF & _WRT_OFF & _CP_OFF
+                      00032 
+                      00033 #DEFINE CLR_PTR     clrf        EI_ARR                  ;limpiar apuntador
+                      00034 
+                      00035 ;***** CONSTANTES
+  00000000            00036 IGUAL_ARR           EQU         0                       ;Será el bit 0 de la bandera flag
+  00000001            00037 F_VIDAS             EQU         1                       ;bit para indicar que se le acabaron las vidas
+  00000006            00038 L_ERROR             EQU         6
+  00000004            00039 L_VIDAS             EQU         4
+  00000007            00040 L_ARMADA            EQU         7
+  00000007            00041 F_INT               EQU         7
+                      00042 
+                      00043         
+                      00044 ;***** DEFINICION DE VARIABLES
+                      00045 
+  00000020            00046 DATO                EQU         0x20                    ; Variable de intercambio de datos
+  00000021            00047 T_DELAY             EQU         0x21                    ; Retardo de tiempo
+  00000022            00048 DELL                EQU         0x22                    ; Parte baja del delay
+  00000023            00049 DELH                EQU         0x23                    ; Parte alta del delay
+  00000024            00050 LCD_VAR             EQU         0x24                    ; Variables para manejo del LCD
+  00000026            00051 KBD_VAR             EQU         0x26                    ; Variables para manejo del Teclado
+  00000028            00052 FREC                EQU         0x28
+                      00053 
+  00000029            00054 CONTT               EQU         0X29
+  00000030            00055 EI_ARR              EQU         0x30                    ;Contador de elementos
+  00000031            00056 LETRA               EQU         0x31    
+                      00057 
+  00000032            00058 elementoI           EQU         0x32
+  00000033            00059 LIMITE              EQU         0x33
+                      00060 
+  00000034            00061 aNUM_1              EQU         0x34
+  00000035            00062 aNUM_2              EQU         0x35
+  00000036            00063 FLAGS               EQU         0x36
+                      00064                     
+  00000037            00065 MATCH               EQU         0x37
+  00000038            00066 VIDAS               EQU         0x38                        ;oportinidades para poner contraseña
+  00000039            00067 CONTDEL             EQU         0x39
+                      00068                     
+  00000040            00069 VAR_AUX             EQU         0x40                    ;variable auxiliar para rutina de servicio
+                      00070 
+  00000041            00071 varTx               EQU         0x41        ;variable donde pondré los datos a transmitir en TXREG
+  00000042            00072 varRx               EQU         0x42        ;variable donde pondré los datos que recibo de RXREG        
+                                        
+                      00073 
+                      00074 ;arreglo de contraseña, ahorita será cte
+  00000045            00075 ARR_C0              EQU         0x45
+  00000046            00076 ARR_C1              EQU         0x46
+  00000047            00077 ARR_C2              EQU         0x47
+  00000048            00078 ARR_C3              EQU         0x48
+                      00079                     
+                      00080                     
+  00000055            00081 ARR_U               EQU         0x55                    ;arreglo donde se guarda la codigo ingresada por
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE  5
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                             el usuario
+                      00082 
+                      00083                     
+                      00084 ;la variable tecla es donde se guarda el valor presionado
+                      00085 ;**********************************************************************
+                      00086                     ORG         0x00                    ; vector de reset
+0000   2???           00087                     goto        main                    ; salta al inicio del programa
+                      00088 
+                      00089                     ORG         0x04
+0004   2???           00090                     goto        INTER                   ; Vector de interrupción
+                      00091 
+                      00092                     ORG         0x05
+                      00093 
+                      00094                     INCLUDE     "lcd_cxx.asm"           ; Librerias incluidas
+                      00001 
+                      00002 
+                      00003 
+                      00004 ;LCD_CXX.ASM
+                      00005  
+                      00006 ;El conjunto de rutinas que se presentan a continuación permiten realizar
+                      00007 ;las tareas básicas de control del módulo de visualización LCD. Se emplean
+                      00008 ;con los PIC 16cxx. En el programa principal se debe reservar memoria
+                      00009 ;para el bloque de variables que utiliza el LCD del modo:
+                      00010 
+                      00011 ;LCD_VAR EQU dir_inicio_del_bloque
+                      00012 
+                      00013 ;BLOQUE DE ETIQUETAS
+                      00014  
+                      00015 #define ENABLE          bsf PORTE,2     ;Activa E
+                      00016 #define DISABLE         bcf PORTE,2     ;Desactiva
+                      00017 #define LEER            bsf PORTE,1     ;Pone LCD en Modo RD
+                      00018 #define ESCRIBIR        bcf PORTE,1     ;Pone LCD en Modo WR
+                      00019 #define ON_COMANDO      bcf PORTE,0     ;Desactiva RS (modo comando)
+                      00020 #define OFF_COMANDO bsf PORTE,0         ;Activa RS (modo datos)
+                      00021 
+                      00022  CBLOCK                 LCD_VAR
+  00000024            00023                         LCD_TEMP_2                              ;Inicio de las variables. Ser  la primer
+                            a
+                      00024                                                                         ;dirección libre disponible 
+  00000025            00025                         LCD_TEMP_1      
+                      00026  ENDC           
+                      00027  
+                      00028 ;RUTINA UP_LCD: Con esta rutina se configura el PIC para que trabaje con el LCD.
+                      00029  
+                      00030  
+0005   1683           00031 UP_LCD                  bsf     STATUS,RP0              ;Banco 1
+0006   0188           00032                         clrf    PORTD                   ;RD <0-7> salidas digitales
+0007   0189           00033                         clrf    PORTE                   ;RE <0-2> salidas digitales
+0008   1283           00034                         bcf     STATUS,RP0              ;Banco 0
+0009   1009           00035                         ON_COMANDO                              ;RS=0
+000A   1109           00036                         DISABLE                                 ;E=0
+000B   0008           00037                         return
+                      00038  
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE  6
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00039  
+                      00040 ;RUTINA LCD_BUSY: Con esta rutina se chequea el estado del 
+                      00041 ;flag BUSY del m¢dulo LCD, que indica, cuando est  activado, que el
+                      00042 ;m¢dulo a£n no ha terminado el comando anterior. La rutina espera a
+                      00043 ;que se complete cualquier comando anterior antes de retornar al
+                      00044 ;programa principal, para poder enviar un nuevo comando.
+                      00045  
+000C   1489           00046 LCD_BUSY                LEER                                    ;Pone el LCD en Modo RD
+000D   1683           00047                         bsf     STATUS,RP0 
+000E   30FF           00048                         movlw   H'FF'
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+000F   0088           00049                         movwf   TRISD                   ;Puerto B como entrada
+0010   1283           00050                         bcf     STATUS,RP0              ;Selecciona el banco 0
+0011   1509           00051                         ENABLE                                  ;Activa el LCD
+0012   0000           00052                         nop
+0013   0000           00053                         nop
+0014   0000           00054                         nop
+0015   0000           00055                         nop
+0016   0000           00056                         nop
+0017   1B88           00057 L_BUSY                  btfsc   PORTD,7                 ;Checa bit de Busy
+0018   2???           00058                         goto    L_BUSY
+0019   1109           00059                         DISABLE                                 ;Desactiva LCD
+001A   1683           00060                         bsf     STATUS,RP0 
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+001B   0188           00061                         clrf    TRISD                   ;Puerto B salida
+001C   1283           00062                         bcf     STATUS,RP0 
+001D   1089           00063                         ESCRIBIR                                ;Pone LCD en modo WR
+001E   0008           00064                         return
+                      00065  
+                      00066 ;RUTINA LCD_E: Se trata de una peque¤a rutina que se encarga de generar
+                      00067 ;un impulso de 1æ s (para una frecuencia de funcionamiento de 4 Mhz)
+                      00068 ;por la patita de salida de la Puerta A RA2, que se halla conectada
+                      00069 ;a la se¤al E (Enable) del m¢dulo LCD. Con esta rutina se pretende activar
+                      00070 ;al m¢dulo LCD.
+                      00071  
+001F   1509           00072 LCD_E                   ENABLE                                  ;Activa E
+0020   0000           00073                         nop
+0021   0000           00074                         nop
+0022   0000           00075                         nop
+0023   0000           00076                         nop
+0024   0000           00077                         nop
+0025   1109           00078                         DISABLE                                 ;Desactiva E
+0026   0008           00079                         return
+                      00080  
+                      00081 ;RUTINA LCD_DATO: Es una rutina que pasa el contenido cargado en el
+                      00082 ;registro W, el cual contiene un caracter ASCII, al PUERTO D, para 
+                      00083 ;visualizarlo por el LCD o escribirlo en la CGRAM.
+                      00084  
+0027   1009           00085 LCD_DATO                ON_COMANDO                              ;Desactiva RS (modo comando)
+0028   0088           00086                         movwf   PORTD                   ;Valor ASCII a sacar por PORTD
+0029   2???           00087                         call    LCD_BUSY                ;Espera a que se libere el LCD
+002A   1409           00088                         OFF_COMANDO                     ;Activa RS (modo dato)
+002B   2???           00089                         call    LCD_E                   ;Genera pulso de E
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE  7
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+002C   0008           00090                         return
+                      00091  
+                      00092 ;RUTINA LCD_REG: Rutina parecida a la anterior, pero el contenido de W
+                      00093 ;ahora es el código de un comando para el LCD, que es necesario pasar
+                      00094 ;también al PUERTO D para su ejecución.
+                      00095  
+002D   1009           00096 LCD_REG         ON_COMANDO                              ;Desactiva RS (modo comando)
+002E   0088           00097                         movwf   PORTD                   ;Código de comando
+002F   2???           00098                         call    LCD_BUSY                ;LCD libre?.
+0030   2???           00099                         call    LCD_E                   ;Si. Genera pulso de E.
+0031   0008           00100                         return
+                      00101  
+                      00102 ;RUTINA LCD_INI: Esta rutina se encarga de realizar la secuencia de 
+                      00103 ;inicialización del módulo LCD de acuerdo con los tiempos dados por 
+                      00104 ;el fabricante (15 ms). Se especifican los valores de DL, N y F,
+                      00105 ;así como la configuración de un interfaz de 8 líneas con el bus
+                      00106 ;de datos del PIC, y 2 líneas de 16 caracteres de 5 x 7 pixels. 
+                      00107  
+0032   3038           00108 LCD_INI                 movlw   b'00111000'
+0033   2???           00109                         call    LCD_REG                 ;Código de instrucción
+0034   2???           00110                         call    LCD_DELAY               ;Temporiza
+0035   3038           00111                         movlw   b'00111000'
+0036   2???           00112                         call    LCD_REG                 ;Código de instrucción
+0037   2???           00113                         call    LCD_DELAY               ;Temporiza
+0038   3038           00114                         movlw   b'00111000'
+0039   2???           00115                         call    LCD_REG                 ;Código de instrucción
+003A   2???           00116                         call    LCD_DELAY               ;Temporiza
+003B   0008           00117                         return
+                      00118  
+                      00119 ;RUTINA BORRA_Y_HOME: Borra el display y retorna el cursor a la posición 0. 
+                      00120  
+003C                  00121 BORRA_Y_HOME    
+003C   3001           00122                         movlw   b'00000001'             ;Borra LCD y Home.
+003D   2???           00123                         call    LCD_REG
+003E   0008           00124                         return
+                      00125  
+                      00126 ;RUTINA DISPLAY_ON_CUR_OFF: Control del display y cursor.
+                      00127 ;Activa el display y desactiva el cursor
+                      00128  
+003F                  00129 DISPLAY_ON_CUR_OFF      
+003F   300C           00130                         movlw   b'00001100'             ;LCD on, cursor off.
+0040   2???           00131                         call    LCD_REG
+0041   0008           00132                         return
+                      00133  
+                      00134 ;RUTINA LCD_DELAY: Se trata de una rutina que implementa un retardo 
+                      00135 ;o temporización de 5 ms. Utiliza dos variables llamadas LCD_TEMP_1 
+                      00136 ;y LCD_TEMP_2, que se van decrementando hasta alcanzar dicho tiempo.
+                      00137  
+0042   0064           00138 LCD_DELAY               clrwdt
+0043   3050           00139                         movlw   50
+0044   00A5           00140                         movwf   LCD_TEMP_1
+0045   01A4           00141                         clrf    LCD_TEMP_2
+0046   0BA4           00142 LCD_DELAY_1             decfsz  LCD_TEMP_2,F
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE  8
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0047   2???           00143                         goto    LCD_DELAY_1
+0048   0BA5           00144                         decfsz  LCD_TEMP_1,F
+0049   2???           00145                         goto    LCD_DELAY_1
+004A   0008           00146                         return
+                      00147         
+                      00095                     INCLUDE     "kbd_cxx.asm"
+                      00001 ;KBD_CXX.ASM
+                      00002  
+                      00003 ;El conjunto de rutinas que se presentan a continuación permiten realizar
+                      00004 ;las tareas básicas de control del teclado. En el programa  principal  se
+                      00005 ;debe reservar memoria para el bloque de variables que utiliza el teclado
+                      00006 
+                      00007 ;BLOQUE DE VARIABLES
+                      00008 
+                      00009  CBLOCK                 KBD_VAR
+  00000026            00010                         TECLA                                   ;Código de tecla presionada
+  00000027            00011                         BARRIDO                                 ;Variable para barrido de teclado
+                      00012  ENDC           
+                      00013 
+                      00014 ;**********************************************************************
+                      00015 ;Tablas de datos
+                      00016 
+004B   0820           00017 KEY_TAB                 movf    DATO,w
+004C   0782           00018                         addwf   PCL,F
+004D   34BE           00019                         retlw   0xBE                            ;Código tecla 0
+004E   3477           00020                         retlw   0x77                            ;Código tecla 1
+004F   34B7           00021                         retlw   0xB7                            ;Código tecla 2                 
+0050   34D7           00022                         retlw   0xD7                            ;Código tecla 3
+0051   347B           00023                         retlw   0x7B                            ;Código tecla 4
+0052   34BB           00024                         retlw   0xBB                            ;Código tecla 5
+0053   34DB           00025                         retlw   0xDB                            ;Código tecla 6                 
+0054   347D           00026                         retlw   0x7D                            ;Código tecla 7
+0055   34BD           00027                         retlw   0xBD                            ;Código tecla 8
+0056   34DD           00028                         retlw   0xDD                            ;Código tecla 9
+0057   347E           00029                         retlw   0x7E                            ;Código tecla A                 
+0058   34DE           00030                         retlw   0xDE                            ;Código tecla B
+0059   34EE           00031                         retlw   0xEE                            ;Código tecla C
+005A   34ED           00032                         retlw   0xED                            ;Código tecla D
+005B   34EB           00033                         retlw   0xEB                            ;Código tecla E                 
+005C   34E7           00034                         retlw   0xE7                            ;Código tecla F
+                      00035 
+005D   0820           00036 TONO                    movf    DATO,w
+005E   0782           00037                         addwf   PCL,F
+005F   346C           00038                         retlw   0x6C                            ; 0 DO
+0060   3475           00039                         retlw   0x75                            ; 1 DO#
+0061   347C           00040                         retlw   0x7C                            ; 2 RE          
+0062   3484           00041                         retlw   0x84                            ; 3 RE#
+0063   348B           00042                         retlw   0x8B                            ; 4 MI
+0064   3491           00043                         retlw   0x91                            ; 5 FA
+0065   3497           00044                         retlw   0x97                            ; 6 FA# 
+0066   349D           00045                         retlw   0x9D                            ; 7 SOL
+0067   34A3           00046                         retlw   0xA3                            ; 8 SOL#
+0068   34A8           00047                         retlw   0xA8                            ; 9 LA
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE  9
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0069   34AD           00048                         retlw   0xAD                            ; A LA# 
+006A   34B2           00049                         retlw   0xB2                            ; B SI
+006B   34B6           00050                         retlw   0xB6                            ; C DO
+006C   34BB           00051                         retlw   0xBB                            ; D DO#
+006D   34BF           00052                         retlw   0xBF                            ; E RE  
+006E   34C3           00053                         retlw   0xC3                            ; F RE#
+                      00054  
+                      00055 ;**********************************************************************
+                      00056 ; Rutina que inicializa puerto D para leer el teclado
+                      00057 
+006F   1683           00058 KBD_INI                 bsf     STATUS,RP0
+0070   3001           00059                         movlw   0x01                            ; Inicializa puertos
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+0071   0086           00060                         movwf   TRISB
+0072   30F0           00061                         movlw   0xF0
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+0073   0088           00062                         movwf   TRISD
+0074   1283           00063                         bcf     STATUS,RP0
+0075   0008           00064                         return
+                      00065 
+                      00066 ;**********************************************************************
+                      00067 ;Subrutina que barre teclado para detectar tecla presionada. Si se presionó
+                      00068 ;tecla el bit 4 de la variable BARRIDO será 1, de lo contrario será 0.
+                      00069 
+0076   30FE           00070 KBD_BARRE               movlw   0xFE
+0077   00A7           00071                         movwf   BARRIDO
+0078   0088           00072 BARRE1                  movwf   PORTD
+0079   0000           00073                         NOP
+007A   0000           00074                         NOP
+007B   0000           00075                         NOP
+007C   0000           00076                         NOP
+007D   0000           00077                         NOP
+007E   0000           00078                         NOP
+007F   0000           00079                         NOP
+0080   0000           00080                         NOP
+0081   0000           00081                         NOP
+0082   0000           00082                         NOP
+0083   0808           00083                         movf    PORTD,W
+0084   00A6           00084                         movwf   TECLA
+0085   39F0           00085                         andlw   0xF0
+0086   3CF0           00086                         sublw   0xF0
+0087   1D03           00087                         btfss   STATUS,Z
+0088   2???           00088                         goto    BARREFIN
+0089   1403           00089                         bsf     STATUS,C                        ; Establece carry en 1
+008A   0DA7           00090                         rlf     BARRIDO,F                       ; rota un bit a la izquierda
+008B   1E27           00091                         btfss   BARRIDO,4
+008C   2???           00092                         goto    BARREFIN
+008D   0827           00093                         movf    BARRIDO,W
+008E   2???           00094                         goto    BARRE1
+008F   0008           00095 BARREFIN                return
+                      00096 
+                      00097 ;**********************************************************************
+                      00098 ;Subrutina que valida tecla presionada. Si la tecla presionada es validada
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 10
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00099 ;establece Z=1, de lo contrario Z=0.
+                      00100 
+0090   0808           00101 KBD_VALID               movf    PORTD,W
+0091   00A6           00102                         movwf   TECLA
+                      00103 
+0092   3013           00104                         movlw   0x13
+0093   00A1           00105                         movwf   T_DELAY
+                      00106 
+0094   2???           00107                         call    DELAY                           ;Retardo 15 ms.
+                      00108 
+0095   0808           00109                         movf    PORTD,W
+0096   0226           00110                         subwf   TECLA,W
+0097   0008           00111                         return
+                      00112 
+                      00113 ;**********************************************************************
+                      00114 ;Subrutina que convierte código de tecla presionada a dato numérico
+                      00115 ;el valor numérico se guarda en DATO
+                      00116 
+0098   01A0           00117 KBD_NUM                 clrf    DATO
+0099   2???           00118 NUM1                    call    KEY_TAB
+                      00119 
+009A   0226           00120                         subwf   TECLA,W
+009B   1903           00121                         btfsc   STATUS,Z
+009C   2???           00122                         goto    NUMFIN
+                      00123 
+009D   0AA0           00124                         incf    DATO,F
+                      00125 
+009E   2???           00126                         goto    NUM1
+009F   0008           00127 NUMFIN                  return
+                      00128 
+                      00129 ;**********************************************************************
+                      00130 ;Subrutina que emite tono durante 100 ms. según la tecla presionada
+                      00131 
+00A0   2???           00132 KBD_TONO                call    TONO                            ;Obtiene valor de tono
+00A1   0081           00133                         movwf   TMR0                            ;Carga TMR0 con valor de tono   
+00A2   00A8           00134                         movwf   FREC
+                      00135 
+00A3   30A0           00136                         movlw   0xA0
+00A4   008B           00137                         movwf   INTCON                          ;Habilita interrupción del timer
+                      00138 
+00A5   30FF           00139                         movlw   0xFF
+00A6   00A1           00140                         movwf   T_DELAY
+                      00141 
+                      00142                         ;bsf    PORTB,4                         ;Enciende LED
+00A7   2???           00143                         call    DELAY                           ;Retardo 50 ms.
+00A8   2???           00144                         call    DELAY                           ;Retardo 50 ms.
+                      00145                         
+                      00146                         ;bcf    PORTB,4                         ;Apaga LED
+                      00147 
+00A9   3000           00148                         movlw   0x00                            ;Inhabilita interrupción del timer
+00AA   008B           00149                         movwf   INTCON
+00AB   0008           00150                         return
+                      00151 
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 11
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00152 ;**********************************************************************
+                      00153 ;Subrutina que espera a que la tecla sea liberada
+                      00154 
+00AC   0808           00155 KBD_LIB                 movf    PORTD,W
+00AD   39F0           00156                         andlw   0xF0
+00AE   3CF0           00157                         sublw   0xF0
+00AF   1D03           00158                         btfss   STATUS,Z
+00B0   2???           00159                         goto    KBD_LIB
+00B1   0008           00160                         return
+                      00096                     INCLUDE     "mensajes_tablas.asm"
+00B2   0820           00001 HEX_ASCII           movf        DATO,W
+00B3   0782           00002                     addwf       PCL,F
+00B4   3430           00003                     retlw       '0'
+00B5   3431           00004                     retlw       '1'
+00B6   3432           00005                     retlw       '2'             
+00B7   3433           00006                     retlw       '3'
+00B8   3434           00007                     retlw       '4'
+00B9   3435           00008                     retlw       '5'
+00BA   3436           00009                     retlw       '6'             
+00BB   3437           00010                     retlw       '7'
+00BC   3438           00011                     retlw       '8'
+00BD   3439           00012                     retlw       '9'
+00BE   3441           00013                     retlw       'A'             
+00BF   3442           00014                     retlw       'B'
+00C0   3443           00015                     retlw       'C'
+00C1   3444           00016                     retlw       'D'
+00C2   3445           00017                     retlw       'E'             
+00C3   3446           00018                     retlw       'F'
+                      00019 
+00C4   0820           00020 CODIGO              movf        DATO,W
+00C5   0782           00021                     addwf       PCL,F
+00C6   3450           00022                     retlw       'P'
+00C7   3449           00023                     retlw       'I'
+00C8   344E           00024                     retlw       'N'             
+00C9   343A           00025                     retlw       ':'
+00CA   3420           00026                     retlw       ' '
+                      00027                   
+00CB   3400           00028                     retlw       0x00
+                      00029                     
+00CC   0820           00030 ACEPTADO            movf        DATO,W
+00CD   0782           00031                     addwf       PCL,F
+00CE   344F           00032                     retlw       'O'
+00CF   344B           00033                     retlw       'K'
+00D0   3420           00034                     retlw       ' '             
+00D1   3420           00035                     retlw       ' '
+00D2   3420           00036                     retlw       ' '      
+00D3   3400           00037                     retlw       0x00
+                      00038                     
+00D4   0820           00039 MSG_ERROR           movf        DATO,W
+00D5   0782           00040                     addwf       PCL,F
+00D6   3445           00041                     retlw       'E'
+00D7   3452           00042                     retlw       'R'
+00D8   3452           00043                     retlw       'R'             
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 12
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+00D9   344F           00044                     retlw       'O'
+00DA   3452           00045                     retlw       'R'
+00DB   3400           00046                     retlw       0x00
+                      00047 
+00DC   0820           00048 NADA                movf        DATO,W
+00DD   0782           00049                     addwf       PCL,F
+00DE   342E           00050                     retlw       '.'
+00DF   342E           00051                     retlw       '.'
+00E0   342E           00052                     retlw       '.'             
+00E1   342E           00053                     retlw       '.'                   
+00E2   3400           00054                     retlw       0x00
+                      00055                     
+00E3   0820           00056 NUEVO               movf        DATO,W
+00E4   0782           00057                     addwf       PCL,F
+00E5   344E           00058                     retlw       'N'
+00E6   3420           00059                     retlw       ' '
+00E7   3450           00060                     retlw       'P'             
+00E8   3449           00061                     retlw       'I'
+00E9   344E           00062                     retlw       'N'
+00EA   343A           00063                     retlw       ':'
+                      00064                    
+00EB   3400           00065                     retlw       0x00
+                      00066                             
+                      00067                     
+00EC   0820           00068 WAIT_ARMAR          movf        DATO,W
+00ED   0782           00069                     addwf       PCL,F
+00EE   3457           00070                     retlw       'W'
+00EF   3454           00071                     retlw       'T'
+00F0   3420           00072                     retlw       ' '
+00F1   3453           00073                     retlw       'S'
+00F2   3432           00074                     retlw       '2'         
+                      00075                       
+00F3   3400           00076                     retlw       0x00
+                      00077                     
+00F4   0820           00078 BLOCK               movf        DATO,W
+00F5   0782           00079                     addwf       PCL,F
+00F6   3442           00080                     retlw       'B'
+00F7   344C           00081                     retlw       'L'
+00F8   344F           00082                     retlw       'O'
+00F9   3443           00083                     retlw       'C'
+00FA   344B           00084                     retlw       'K'         
+                      00085                       
+00FB   3400           00086                     retlw       0x00
+                      00087                     
+                      00088 
+                      00089                     
+                      00090                     
+                      00091                     
+                      00097                     INCLUDE     "UART_LIB.asm"
+                      00001 #DEFINE  TX_EN  bsf     TXSTA,TXEN      ;habilitar transmisión (banco 1)
+                      00002 #DEFINE  TX_DIS bcf     TXSTA,TXEN      ;deshabilitar transmisión (banco 1)
+                      00003 
+                      00004 #DEFINE  RX_EN  bsf     RCSTA,CREN      ;habilitar transmisión (banco 0)
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 13
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00005 #DEFINE  RX_DIS bcf     RCSTA,CREN      ;deshabilitar transmisión (banco 0)     
+                      00006         
+                      00007 #DEFINE  SC_EN  bsf     RCSTA,SPEN      ;habilitar comunicación serial (banco 0)
+                      00008     
+                      00009 ;inicializar UART
+00FC                  00010 INIT_UART
+00FC   1303           00011         bcf     STATUS,RP1      
+00FD   1683           00012         bsf     STATUS,RP0      ;selecciona banco 1
+                      00013         
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+00FE   1707           00014         bsf     TRISC,6
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+00FF   1787           00015         bsf     TRISC,7
+                      00016         
+                      00017         ;configurar baud rate
+0100   3081           00018         movlw   .129            ;129 a BRG (baud rate 9600)
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+0101   0099           00019         movwf   SPBRG
+                      00020         
+                      00021         ;modo 8 bits, asíncrono, high speed, habilitar transmisión
+0102   30A4           00022         movlw   b'10100100'
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+0103   0098           00023         movwf   TXSTA
+                      00024         
+0104   1283           00025         bcf     STATUS,RP0      ;banco 0
+                      00026         ;habilitar comunicación serial
+0105   1618           00027         RX_EN                   ;habilitar recepción
+0106   3090           00028         movlw   b'10010000'     
+0107   0098           00029         movwf   RCSTA
+                      00030         
+0108   128C           00031         bcf     PIR1,RCIF; LIMPIAMOS FLAG RX
+                      00032         
+0109   0008           00033         return
+                      00034         
+010A                  00035 UART_ENVIAR
+                      00036         ; el contenido a enviar debe de estar en W      
+010A   1283           00037         bcf     STATUS,RP0
+                      00038         
+010B   1E0C           00039 wtT     btfss   PIR1,TXIF       ;TXREG vacío?
+010C   2???           00040         goto    wtT             ;no
+                      00041         
+010D   0099           00042         movwf   TXREG           ;mover a txreg
+                      00043         
+010E   0008           00044         return
+                      00045         
+010F                  00046 UART_RECIBIR    
+                      00047 ;se asume que externamente se checa la bandera RCIF
+                      00048 ;los datos recibidos se ponen en la variable varRx
+010F   1283           00049         bcf     STATUS,RP0                      ;banco 0
+                      00050         
+                      00051         ;primero veo si hay overrun error
+0110   1898           00052         btfsc   RCSTA,OERR      ;hay overrun error?
+0111   2???           00053         call    RX_OERR         ;sí-> desactivar error
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 14
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00054         
+0112   081A           00055         movfw   RCREG           ;no->lo que sea que recibí lo pongo en W
+0113   00C2           00056         movwf   varRx
+                      00057         
+0114   0008           00058         return
+                      00059         
+                      00060         
+0115                  00061 RX_OERR 
+                      00062         ;si hay overrun error, hay que resetear CREN
+                      00063         
+0115   1218           00064         RX_DIS
+0116   1618           00065         RX_EN
+0117   0008           00066         return
+                      00067 
+                      00068 
+                      00098 
+                      00099 
+                      00100 
+                      00101 ;**********************************************************************
+                      00102 ;Tablas de datos
+                      00103 
+                      00104 
+                      00105                     
+                      00106 
+                      00107 ;****COMPARAR ARRAYS->SI SON IGUALES, SE PONE FLAG,0 en 1
+                      00108 ;<editor-fold defaultstate="collapsed" desc="subrutina compararar arrays">
+0118                  00109 COMPARAR_ARRAY
+0118   01B7           00110         clrf        MATCH           ;limpio match       
+0119   01B2           00111         clrf        elementoI       ;limpio comtador de elementos
+                      00112         
+011A                  00113 WLCOMPARAR
+                      00114         
+                      00115         read_arr    ARR_C0,elementoI, aNUM_1        ;pone el elemento I en NUM1
+                          M ;solo es para leer el elemento I del arreglo        
+011A   3045               M             movlw   ARR_C0      ;dirección del elemento 1 del arreglo
+011B   0732               M             addwf   elementoI,W ;dirección del elemento i-ésimo gaurdada en W
+011C   0084               M             movwf   FSR         ;ahora ya estoy apuntando a ese elemento
+                          M             
+011D   0800               M             movfw   INDF
+011E   00B4               M             movwf   aNUM_1
+                          M             
+                      00116                 
+                      00117         read_arr   ARR_U,elementoI, aNUM_2          ;pone el elemento I en NUM2 
+                          M ;solo es para leer el elemento I del arreglo        
+011F   3055               M             movlw   ARR_U       ;dirección del elemento 1 del arreglo
+0120   0732               M             addwf   elementoI,W ;dirección del elemento i-ésimo gaurdada en W
+0121   0084               M             movwf   FSR         ;ahora ya estoy apuntando a ese elemento
+                          M             
+0122   0800               M             movfw   INDF
+0123   00B5               M             movwf   aNUM_2
+                          M             
+                      00118         
+                      00119         ;comparo NUM1 y NUM2->si son iguales 
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 15
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00120         comparar    aNUM_1, aNUM_2, MatchMM, SIGUEMM
+                          M ;saber si son iguales  
+0124   0834               M             movfw   aNUM_1
+0125   0235               M             subwf   aNUM_2,W
+                          M             
+0126   1D03               M             btfss           STATUS, Z
+0127   2???               M             goto            SIGUEMM
+                          M         
+0128   2???               M             goto            MatchMM
+                          M 
+                      00121         
+0129                  00122 MatchMM ;incrementar Match si son iguales
+0129   0AB7           00123         incf        MATCH, f
+                      00124         
+012A   0AB2           00125 SIGUEMM incf        elementoI,f
+                      00126         
+                      00127         ;veo si elementoI llegó al límite (4 elementos)
+                      00128         comparar    elementoI, LIMITE, FINC, WLCOMPARAR
+                          M ;saber si son iguales  
+012B   0832               M             movfw   elementoI
+012C   0233               M             subwf   LIMITE,W
+                          M             
+012D   1D03               M             btfss           STATUS, Z
+012E   2???               M             goto            WLCOMPARAR
+                          M         
+012F   2???               M             goto            FINC
+                          M 
+                      00129                                                 ;continua otra iteración
+                      00130         ;sí , ya acabé el array
+                      00131         ;ahora, solo veo si los arrays son iguales
+                      00132 
+                      00133 FINC    comparar    MATCH, LIMITE, IGUAL, DIFF
+                          M ;saber si son iguales  
+0130   0837               M             movfw   MATCH
+0131   0233               M             subwf   LIMITE,W
+                          M             
+0132   1D03               M             btfss           STATUS, Z
+0133   2???               M             goto            DIFF
+                          M         
+0134   2???               M             goto            IGUAL
+                          M 
+                      00134         
+0135   1436           00135 IGUAL   bsf         FLAGS,0
+0136   0008           00136         return
+                      00137         
+0137   1036           00138 DIFF    bcf         FLAGS,0
+0138   0008           00139         return
+                      00140 ;</editor-fold>
+                      00141 ;**********************************************************************
+                      00142 ; Rutina de inicialización
+                      00143 ;<editor-fold defaultstate="collapsed" desc="inicializacion">
+0139   1683           00144 INICIALIZA  bsf         STATUS,RP0              ;Banco 1
+013A   1303           00145             bcf         STATUS,RP1
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 16
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+013B   3006           00146             movlw       0x06
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+013C   009F           00147             movwf       ADCON1
+                      00148                     
+013D   30FF           00149             movlw       0xFF            ;configura los 6 pines de A como entrada
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+013E   0085           00150             movwf       TRISA           ;para los botones
+013F   1283           00151             bcf         STATUS,RP0      ;Banco 0
+                      00152                         
+0140   2???           00153             call        UP_LCD          ; Configura el PIC para trabajar con LCD
+0141   2???           00154             call        LCD_INI         ; Inicializa LCD
+0142   2???           00155             call        BORRA_Y_HOME    ; Borra LCD y posiciona cursor en dir. 0
+0143   2???           00156             call        DISPLAY_ON_CUR_OFF  ; Activa display y desactiva cursor
+0144   3080           00157             movlw       0x80            ; Primera posición de primera fila
+0145   2???           00158             call        LCD_REG
+0146   3006           00159             movlw       0x06            ; Programa incremento en  dirección del
+0147   2???           00160             call        LCD_REG         ; cursor y trabajo en modo normal
+                      00161 
+0148   1683           00162             bsf         STATUS,RP0
+0149   3005           00163             movlw       0x05
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+014A   0081           00164             movwf       OPTION_REG      ; Programa preescalador
+                      00165             movlf       0x01, TRISB
+                          M ;mover constante a registro
+014B   3001               M             movlw   0x01
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+014C   0086               M             movwf   TRISB
+                          M 
+014D   0186           00166             clrf        PORTB
+014E   3080           00167             movlw       0x80
+Message[302]: Register in operand not in bank 0.  Ensure that bank bits are correct.
+014F   0087           00168             movwf       TRISC
+0150   1283           00169             bcf         STATUS,RP0      
+                      00170                     
+                      00171             movlf       0x6C, FREC
+                          M ;mover constante a registro
+0151   306C               M             movlw   0x6C
+0152   00A8               M             movwf   FREC
+                          M 
+                      00172             movlf       0x04, LIMITE     
+                          M ;mover constante a registro
+0153   3004               M             movlw   0x04
+0154   00B3               M             movwf   LIMITE
+                          M 
+                      00173             msg_cte     0x00,NUEVO
+                          M             
+                          M ;0x80: primera fila
+                          M ;0xC0:segunda fila
+                          M             
+                          M ;va a desplegar un mensaje constante, dada la tabla que contiene los caracteres
+                          M ;después de despleagrlo, se va a la primera posicion de segunda fila
+                          M             
+                          M ;DATO es una variable definida en el main
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 17
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+  0000                    M             local   LAZO
+  0000                    M             local   FINMEN
+                          M             
+                          M             ;call       BORRA_Y_HOME
+0155   3000               M             movlw       0x00
+0156   2???               M             call        LCD_REG
+                          M             
+0157   3000               M             movlw       0x00            ; Despliega mensaje
+0158   00A0               M             movwf       DATO
+0159   2???               M LAZO        call        NUEVO
+015A   3800               M             iorlw       0x00
+015B   1903               M             btfsc       STATUS,Z
+015C   2???               M             goto        FINMEN
+015D   2???               M             call        LCD_DATO
+015E   0AA0               M             incf        DATO,F
+015F   2???               M             goto        LAZO
+                          M 
+0160   30C0               M FINMEN      movlw       0xC0            ; Primera posición de segunda fila
+0161   2???               M             call        LCD_REG
+                          M             
+0162   2???           00174             call        INIT_RES 
+                      00175                     
+0163   0008           00176             return
+                      00177 ;</editor-fold>             
+                      00178 ;**********************************************************************
+                      00179 ;Subrutina de retardo
+                      00180 ;<editor-fold defaultstate="collapsed" desc="retardos">
+0164   0821           00181 DELAY               movf        T_DELAY,w
+0165   00A3           00182                     movwf       DELH
+0166   30FF           00183 DEL2                movlw       0xFF
+0167   00A2           00184                     movwf       DELL
+0168   0BA2           00185 DEL1                decfsz      DELL,f
+0169   2???           00186                     goto        DEL1
+016A   0BA3           00187                     decfsz      DELH,f
+016B   2???           00188                     goto        DEL2
+016C   0008           00189                     return                  
+                      00190 
+                      00191         
+                      00192         
+016D   2???           00193 GranD   call        DELAY
+016E   2???           00194         call        DELAY
+016F   2???           00195         call        DELAY
+0170   2???           00196         call        DELAY
+0171   2???           00197         call        DELAY
+0172   2???           00198         call        DELAY
+0173   2???           00199         call        DELAY
+0174   2???           00200         call        DELAY
+0175   2???           00201         call        DELAY
+0176   2???           00202         call        DELAY
+0177   2???           00203         call        DELAY
+                      00204         
+0178   0008           00205         return
+                      00206 ;</editor-fold>
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 18
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00207 ;**********************************************************************
+                      00208 
+                      00209 ;<editor-fold defaultstate="collapsed" desc="Rutina de servicio">
+0179                  00210 INTER   
+0179   00C0           00211             movwf       VAR_AUX         ;guardar lo que tenía en W
+                      00212         
+017A   1C8B           00213             btfss       INTCON,INTF
+017B   2???           00214             goto        INT_TMR0
+017C   2???           00215             call        TRIGGER 
+017D   108B           00216             bcf         INTCON,INTF
+017E   2???           00217             goto        FIN_INT
+                      00218         
+017F   1D0B           00219 INT_TMR0    btfss       INTCON,T0IF     ;TMR0 se encargarpa de hacer las señales
+0180   2???           00220             goto        INTER
+0181   2???           00221             call        SERV_TMR0
+0182   110B           00222             bcf         INTCON,T0IF
+                      00223         
+0183   0840           00224 FIN_INT     movfw       VAR_AUX    
+                      00225          
+0184   0009           00226             retfie
+                      00227 ;</editor-fold>
+                      00228         
+                      00229 
+                      00230 ;<editor-fold defaultstate="collapsed" desc="init_res">
+0185                  00231 INIT_RES    
+0185   0186           00232                     clrf        PORTB
+0186   01B6           00233                     clrf        FLAGS
+0187   01B0           00234                     clrf        EI_ARR                  ;limpiar ei_arr
+                      00235                     movlf       0x03, VIDAS
+                          M ;mover constante a registro
+0188   3003               M             movlw   0x03
+0189   00B8               M             movwf   VIDAS
+                          M 
+                      00236                     msg_cte     0xC0,NADA
+                          M             
+                          M ;0x80: primera fila
+                          M ;0xC0:segunda fila
+                          M             
+                          M ;va a desplegar un mensaje constante, dada la tabla que contiene los caracteres
+                          M ;después de despleagrlo, se va a la primera posicion de segunda fila
+                          M             
+                          M ;DATO es una variable definida en el main
+  0000                    M             local   LAZO
+  0000                    M             local   FINMEN
+                          M             
+                          M             ;call       BORRA_Y_HOME
+018A   30C0               M             movlw       0xC0
+018B   2???               M             call        LCD_REG
+                          M             
+018C   3000               M             movlw       0x00            ; Despliega mensaje
+018D   00A0               M             movwf       DATO
+018E   2???               M LAZO        call        NADA
+018F   3800               M             iorlw       0x00
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 19
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+0190   1903               M             btfsc       STATUS,Z
+0191   2???               M             goto        FINMEN
+0192   2???               M             call        LCD_DATO
+0193   0AA0               M             incf        DATO,F
+0194   2???               M             goto        LAZO
+                          M 
+0195   30C0               M FINMEN      movlw       0xC0            ; Primera posición de segunda fila
+0196   2???               M             call        LCD_REG
+                          M             
+                      00237                     movlf       0x00, INTCON            ;DESACTIVAR INTS
+                          M ;mover constante a registro
+0197   3000               M             movlw   0x00
+0198   008B               M             movwf   INTCON
+                          M 
+                      00238                     
+0199   0008           00239                     return
+                      00240     ;</editor-fold>
+                      00241 
+                      00242 ;<editor-fold defaultstate="collapsed" desc="kbd-lcd">
+019A                  00243 KBD_LCD             
+019A   2???           00244     call        KBD_VALID               ; Valida tecla presionada
+019B   1D03           00245     btfss       STATUS,Z                ; Verifica si la tecla fue válidada
+019C   2???           00246     goto        KB_LC_FIN               ; Si tecla no válida va a LOOP2
+                      00247 
+019D   2???           00248     call        KBD_NUM                 ; Convierte código de tecla a numérico
+019E   2???           00249     call        KBD_LIB                 ; Espera a que la tecla sea liberada                    
+019F   2???           00250     call        HEX_ASCII               ; Convierte valor numérico a ASCII
+                      00251                   
+01A0   00B1           00252     movwf       LETRA                   ;aquí guardo el código ascii de la letra            
+                      00253     write_arr   ARR_U, EI_ARR, LETRA    ;escribo en el arreglo      
+                          M             ;Arreglo es el apuntador/dirección del arreglo
+                          M             ;elemento es el contador de cuátos escribió
+                          M             ;var es la variable desde la cual va a leer y poner en INDF
+                          M             
+01A1   3055               M             movlw   ARR_U           ;dirección del elemento 1 del arreglo
+01A2   0730               M             addwf   EI_ARR,W        ;dirección del elemento i guardada en W
+01A3   0084               M             movwf   FSR             ;ahora ya estoy apuntando a ese elemento
+                          M 
+                          M             ;aqui quiero escribir en indf el código ascii de la letra
+01A4   0831               M             movfw   LETRA
+01A5   0080               M             movwf   INDF            ;estoy escribiendo en INDF
+                          M 
+01A6   0AB0               M             incf    EI_ARR,f        ;está listo para escribir en el sig elemento
+                          M             
+                      00254                     
+01A7   2???           00255     call        LCD_DATO                ; Despliega dato en LCD
+01A8   0008           00256 KB_LC_FIN           return
+                      00257 ;</editor-fold>
+                      00258 
+                      00259 
+                      00260 ;**********************************************************************
+                      00261 ;Servicio de interrupción del timer
+                      00262 
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 20
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00263 ;<editor-fold defaultstate="collapsed" desc="tmr0">
+01A9   1807           00264 SERV_TMR0           btfsc       PORTC,0                 ; Verifica estado de RA3
+01AA   2???           00265                     goto        APAGA
+01AB   1407           00266                     bsf         PORTC,0                 ; RA3 = 1
+01AC   2???           00267                     goto        CONTINUA
+01AD   1007           00268 APAGA               bcf         PORTC,0                 ; RA3 = 0
+01AE   0828           00269 CONTINUA            movf        FREC,W
+01AF   0081           00270                     movwf       TMR0                    ; Carga cuenta en TMR0
+01B0   30A0           00271                     movlw       0xA0                    ;activar interrupciones
+01B1   008B           00272                     movwf       INTCON
+                      00273                     
+01B2   0008           00274     return
+                      00275     ;</editor-fold>
+                      00276                     
+                      00277 ;<editor-fold defaultstate="collapsed" desc="trigger">
+01B3                  00278 TRIGGER 
+01B3   1486           00279     bsf PORTB,1 ;prender LED
+                      00280 
+01B4   3045           00281     movlw       'E'
+01B5   2???           00282     call        UART_ENVIAR
+                      00283     
+01B6   17B6           00284     bsf FLAGS,F_INT             
+                      00285     movlf       0xA0, INTCON            
+                          M ;mover constante a registro
+01B7   30A0               M             movlw   0xA0
+01B8   008B               M             movwf   INTCON
+                          M 
+                      00286 
+                      00287         
+01B9   0008           00288     return
+                      00289     
+                      00290     ;</editor-fold>
+                      00291 
+                      00292 ;**********************************************************************
+                      00293 ;Definir nuevo pin
+                      00294     
+01BA                  00295 NUEVO_PIN
+                      00296 ;solo regreso al presionar S2
+                      00297 
+01BA   01B0           00298 nueva_otra  clrf        EI_ARR
+                      00299             msg_cte     0xC0, NADA
+                          M             
+                          M ;0x80: primera fila
+                          M ;0xC0:segunda fila
+                          M             
+                          M ;va a desplegar un mensaje constante, dada la tabla que contiene los caracteres
+                          M ;después de despleagrlo, se va a la primera posicion de segunda fila
+                          M             
+                          M ;DATO es una variable definida en el main
+  0000                    M             local   LAZO
+  0000                    M             local   FINMEN
+                          M             
+                          M             ;call       BORRA_Y_HOME
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 21
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+01BB   30C0               M             movlw       0xC0
+01BC   2???               M             call        LCD_REG
+                          M             
+01BD   3000               M             movlw       0x00            ; Despliega mensaje
+01BE   00A0               M             movwf       DATO
+01BF   2???               M LAZO        call        NADA
+01C0   3800               M             iorlw       0x00
+01C1   1903               M             btfsc       STATUS,Z
+01C2   2???               M             goto        FINMEN
+01C3   2???               M             call        LCD_DATO
+01C4   0AA0               M             incf        DATO,F
+01C5   2???               M             goto        LAZO
+                          M 
+01C6   30C0               M FINMEN      movlw       0xC0            ; Primera posición de segunda fila
+01C7   2???               M             call        LCD_REG
+                          M             
+                      00300                     
+01C8   1E8C           00301 wtR_pin     btfss       PIR1,RCIF       ;algo se recibió?
+01C9   2???           00302             goto        wtR_pin         ;no->seguir esperando 
+                      00303                     
+01CA   2???           00304             call        UART_RECIBIR     ;el caracter recibido está en Rx y W
+01CB   2???           00305             call        LCD_DATO         ;ver carcater recibido
+                      00306             
+                      00307             ;ahora escribir dato en ARR_C0
+                      00308             write_arr   ARR_C0, EI_ARR, varRx   
+                          M             ;Arreglo es el apuntador/dirección del arreglo
+                          M             ;elemento es el contador de cuátos escribió
+                          M             ;var es la variable desde la cual va a leer y poner en INDF
+                          M             
+01CC   3045               M             movlw   ARR_C0          ;dirección del elemento 1 del arreglo
+01CD   0730               M             addwf   EI_ARR,W        ;dirección del elemento i guardada en W
+01CE   0084               M             movwf   FSR             ;ahora ya estoy apuntando a ese elemento
+                          M 
+                          M             ;aqui quiero escribir en indf el código ascii de la letra
+01CF   0842               M             movfw   varRx
+01D0   0080               M             movwf   INDF            ;estoy escribiendo en INDF
+                          M 
+01D1   0AB0               M             incf    EI_ARR,f        ;está listo para escribir en el sig elemento
+                          M             
+                      00309                     
+                      00310             ;ahora hay que preguntar si ya fueron los 4 dígitos
+01D2   0830           00311             movfw       EI_ARR
+01D3   3C04           00312             sublw       0x04
+01D4   1D03           00313             btfss       STATUS,Z        ;ya puso 4 digitos
+01D5   2???           00314             goto        wtR_pin         ;no->espera el otro caracter
+                      00315                                         
+                      00316                                     
+                      00317             ;si presiono S3 significa que la contraseña se define y continuo
+01D6   1A05           00318 WT_S3       btfsc       PORTA,4
+01D7   2???           00319             goto        WT_S2           ;no se presionó, checo S2
+01D8   2???           00320             goto        FIN_PIN         ;continuar
+                      00321                     
+                      00322             ;si presiono S2 significa, defino otra contraseña
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 22
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+01D9   1A85           00323 WT_S2       btfsc       PORTA,5
+01DA   2???           00324             goto        WT_S3
+01DB   2???           00325             goto        nueva_otra
+                      00326             
+01DC   0008           00327 FIN_PIN     return
+                      00328             
+                      00329             
+01DD                  00330 INCORRECTO_3
+01DD   1606           00331             bsf         PORTB,L_VIDAS
+01DE   14B6           00332             bsf         FLAGS, F_VIDAS      ;poner en 1 la bandera de vidas
+                      00333             msg_cte     0x00, BLOCK
+                          M             
+                          M ;0x80: primera fila
+                          M ;0xC0:segunda fila
+                          M             
+                          M ;va a desplegar un mensaje constante, dada la tabla que contiene los caracteres
+                          M ;después de despleagrlo, se va a la primera posicion de segunda fila
+                          M             
+                          M ;DATO es una variable definida en el main
+  0000                    M             local   LAZO
+  0000                    M             local   FINMEN
+                          M             
+                          M             ;call       BORRA_Y_HOME
+01DF   3000               M             movlw       0x00
+01E0   2???               M             call        LCD_REG
+                          M             
+01E1   3000               M             movlw       0x00            ; Despliega mensaje
+01E2   00A0               M             movwf       DATO
+01E3   2???               M LAZO        call        BLOCK
+01E4   3800               M             iorlw       0x00
+01E5   1903               M             btfsc       STATUS,Z
+01E6   2???               M             goto        FINMEN
+01E7   2???               M             call        LCD_DATO
+01E8   0AA0               M             incf        DATO,F
+01E9   2???               M             goto        LAZO
+                          M 
+01EA   30C0               M FINMEN      movlw       0xC0            ; Primera posición de segunda fila
+01EB   2???               M             call        LCD_REG
+                          M             
+01EC   3042           00334             movlw       'B'
+01ED   2???           00335             call        UART_ENVIAR
+                      00336             
+01EE   0008           00337             return
+                      00338             
+01EF                  00339 DESBLOQUEAR
+                      00340 
+01EF   1E8C           00341 wtRF        btfss       PIR1,RCIF       ;algo se recibió?
+01F0   2???           00342             goto        wtRF            ;no->seguir esperando
+                      00343                     
+01F1   2???           00344             call        UART_RECIBIR    ;sí->ver qué se recibió
+                      00345                     
+01F2   3A48           00346             xorlw       'H'             ;el carcter recibido está en W
+01F3   1D03           00347             btfss       STATUS,Z
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 23
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+01F4   2???           00348             goto        wtRF
+                      00349             
+01F5   0008           00350             return
+                      00351             
+01F6                  00352 PIN_MAL
+                      00353             msg_cte     0x80,MSG_ERROR
+                          M             
+                          M ;0x80: primera fila
+                          M ;0xC0:segunda fila
+                          M             
+                          M ;va a desplegar un mensaje constante, dada la tabla que contiene los caracteres
+                          M ;después de despleagrlo, se va a la primera posicion de segunda fila
+                          M             
+                          M ;DATO es una variable definida en el main
+  0000                    M             local   LAZO
+  0000                    M             local   FINMEN
+                          M             
+                          M             ;call       BORRA_Y_HOME
+01F6   3080               M             movlw       0x80
+01F7   2???               M             call        LCD_REG
+                          M             
+01F8   3000               M             movlw       0x00            ; Despliega mensaje
+01F9   00A0               M             movwf       DATO
+01FA   2???               M LAZO        call        MSG_ERROR
+01FB   3800               M             iorlw       0x00
+01FC   1903               M             btfsc       STATUS,Z
+01FD   2???               M             goto        FINMEN
+01FE   2???               M             call        LCD_DATO
+01FF   0AA0               M             incf        DATO,F
+0200   2???               M             goto        LAZO
+                          M 
+0201   30C0               M FINMEN      movlw       0xC0            ; Primera posición de segunda fila
+0202   2???               M             call        LCD_REG
+                          M             
+                      00354             mdelay      0xFF
+                          M                     
+  0000                    M             local       delayaso
+                          M                    
+0203   30FF               M             movlw       0xFF
+0204   00B9               M             movwf       CONTDEL
+                          M                 
+                          M                     
+0205   2???               M delayaso    call        DELAY
+0206   0BB9               M             decfsz      CONTDEL,f
+0207   2???               M             goto        delayaso
+                          M                     
+0208   1706           00355             bsf         PORTB, L_ERROR  ;prender led 6,indicando error
+0209   0008           00356             return
+                      00357             
+                      00358 PIN_OK      msg_cte     0x80,ACEPTADO               
+                          M             
+                          M ;0x80: primera fila
+                          M ;0xC0:segunda fila
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 24
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                          M             
+                          M ;va a desplegar un mensaje constante, dada la tabla que contiene los caracteres
+                          M ;después de despleagrlo, se va a la primera posicion de segunda fila
+                          M             
+                          M ;DATO es una variable definida en el main
+  0000                    M             local   LAZO
+  0000                    M             local   FINMEN
+                          M             
+                          M             ;call       BORRA_Y_HOME
+020A   3080               M             movlw       0x80
+020B   2???               M             call        LCD_REG
+                          M             
+020C   3000               M             movlw       0x00            ; Despliega mensaje
+020D   00A0               M             movwf       DATO
+020E   2???               M LAZO        call        ACEPTADO
+020F   3800               M             iorlw       0x00
+0210   1903               M             btfsc       STATUS,Z
+0211   2???               M             goto        FINMEN
+0212   2???               M             call        LCD_DATO
+0213   0AA0               M             incf        DATO,F
+0214   2???               M             goto        LAZO
+                          M 
+0215   30C0               M FINMEN      movlw       0xC0            ; Primera posición de segunda fila
+0216   2???               M             call        LCD_REG
+                          M             
+                      00359             mdelay      0xFF
+                          M                     
+  0000                    M             local       delayaso
+                          M                    
+0217   30FF               M             movlw       0xFF
+0218   00B9               M             movwf       CONTDEL
+                          M                 
+                          M                     
+0219   2???               M delayaso    call        DELAY
+021A   0BB9               M             decfsz      CONTDEL,f
+021B   2???               M             goto        delayaso
+                          M                     
+                      00360             
+021C   0008           00361             return
+                      00362             
+021D   1786           00363 ACTIVADA    bsf         PORTB,7                 ;prender pin 7
+                      00364             msg_cte     0x00, CODIGO
+                          M             
+                          M ;0x80: primera fila
+                          M ;0xC0:segunda fila
+                          M             
+                          M ;va a desplegar un mensaje constante, dada la tabla que contiene los caracteres
+                          M ;después de despleagrlo, se va a la primera posicion de segunda fila
+                          M             
+                          M ;DATO es una variable definida en el main
+  0000                    M             local   LAZO
+  0000                    M             local   FINMEN
+                          M             
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 25
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                          M             ;call       BORRA_Y_HOME
+021E   3000               M             movlw       0x00
+021F   2???               M             call        LCD_REG
+                          M             
+0220   3000               M             movlw       0x00            ; Despliega mensaje
+0221   00A0               M             movwf       DATO
+0222   2???               M LAZO        call        CODIGO
+0223   3800               M             iorlw       0x00
+0224   1903               M             btfsc       STATUS,Z
+0225   2???               M             goto        FINMEN
+0226   2???               M             call        LCD_DATO
+0227   0AA0               M             incf        DATO,F
+0228   2???               M             goto        LAZO
+                          M 
+0229   30C0               M FINMEN      movlw       0xC0            ; Primera posición de segunda fila
+022A   2???               M             call        LCD_REG
+                          M             
+                      00365             msg_cte     0xC0, NADA
+                          M             
+                          M ;0x80: primera fila
+                          M ;0xC0:segunda fila
+                          M             
+                          M ;va a desplegar un mensaje constante, dada la tabla que contiene los caracteres
+                          M ;después de despleagrlo, se va a la primera posicion de segunda fila
+                          M             
+                          M ;DATO es una variable definida en el main
+  0000                    M             local   LAZO
+  0000                    M             local   FINMEN
+                          M             
+                          M             ;call       BORRA_Y_HOME
+022B   30C0               M             movlw       0xC0
+022C   2???               M             call        LCD_REG
+                          M             
+022D   3000               M             movlw       0x00            ; Despliega mensaje
+022E   00A0               M             movwf       DATO
+022F   2???               M LAZO        call        NADA
+0230   3800               M             iorlw       0x00
+0231   1903               M             btfsc       STATUS,Z
+0232   2???               M             goto        FINMEN
+0233   2???               M             call        LCD_DATO
+0234   0AA0               M             incf        DATO,F
+0235   2???               M             goto        LAZO
+                          M 
+0236   30C0               M FINMEN      movlw       0xC0            ; Primera posición de segunda fila
+0237   2???               M             call        LCD_REG
+                          M             
+                      00366                     
+                      00367             ;activar interrupcion por RB0 e GIE (NO TRM0)
+                      00368             movlf       0x90, INTCON
+                          M ;mover constante a registro
+0238   3090               M             movlw   0x90
+0239   008B               M             movwf   INTCON
+                          M 
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 26
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+023A   0008           00369             return
+                      00370     
+                      00371 ;**********************************************************************
+                      00372 ; Programa principal
+                      00373 
+023B   2???           00374 main        call        INICIALIZA              ;Rutina de inicialización
+023C   2???           00375             call        INIT_UART               ;Inicializa uart
+                      00376                     
+                      00377 ;Definir contraseña
+023D   2???           00378             call        NUEVO_PIN
+                      00379              mdelay     0xAF
+                          M                     
+  0000                    M             local       delayaso
+                          M                    
+023E   30AF               M             movlw       0xAF
+023F   00B9               M             movwf       CONTDEL
+                          M                 
+                          M                     
+0240   2???               M delayaso    call        DELAY
+0241   0BB9               M             decfsz      CONTDEL,f
+0242   2???               M             goto        delayaso
+                          M                     
+                      00380 ;Esperar a que se active la alarma
+                      00381                     
+                      00382             ;reiniciar:vidas, leds, flags, ptr, deplegar msg, desactivar ints
+                      00383 WT_0        msg_cte     0x00,WAIT_ARMAR     ;mensaje de espera
+                          M             
+                          M ;0x80: primera fila
+                          M ;0xC0:segunda fila
+                          M             
+                          M ;va a desplegar un mensaje constante, dada la tabla que contiene los caracteres
+                          M ;después de despleagrlo, se va a la primera posicion de segunda fila
+                          M             
+                          M ;DATO es una variable definida en el main
+  0000                    M             local   LAZO
+  0000                    M             local   FINMEN
+                          M             
+                          M             ;call       BORRA_Y_HOME
+0243   3000               M             movlw       0x00
+0244   2???               M             call        LCD_REG
+                          M             
+0245   3000               M             movlw       0x00            ; Despliega mensaje
+0246   00A0               M             movwf       DATO
+0247   2???               M LAZO        call        WAIT_ARMAR
+0248   3800               M             iorlw       0x00
+0249   1903               M             btfsc       STATUS,Z
+024A   2???               M             goto        FINMEN
+024B   2???               M             call        LCD_DATO
+024C   0AA0               M             incf        DATO,F
+024D   2???               M             goto        LAZO
+                          M 
+024E   30C0               M FINMEN      movlw       0xC0            ; Primera posición de segunda fila
+024F   2???               M             call        LCD_REG
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 27
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                          M             
+0250   2???           00384             call        INIT_RES            ;
+                      00385             movlf       0x00, INTCON        ;desactivar interrupciones
+                          M ;mover constante a registro
+0251   3000               M             movlw   0x00
+0252   008B               M             movwf   INTCON
+                          M 
+                      00386             
+0253                  00387 WT_ARMAR
+0253   1A85           00388             btfsc       PORTA,5
+0254   2???           00389             goto        WT_ARMAR        ;esperar a que se arme 
+                      00390                                 
+                      00391     ;ya fue activada la alarma
+0255   2???           00392             call        ACTIVADA     
+                      00393                     
+0256   2???           00394 LOOP1       call        KBD_INI         ; Inicializa puerto para leer teclado
+0257   2???           00395             call        KBD_BARRE       ; Efectua barrido de teclado
+0258   1E27           00396             btfss       BARRIDO,4       ; Verifica si se presionó tecla
+0259   2???           00397             goto        CHECAR          ; Checa si se escribieron 4 carcteres
+                      00398                                 
+025A   2???           00399             call        KBD_LCD         ; Reconoce tecla, y exhibe
+                      00400                     
+                      00401                     
+                      00402             ;checar si ya se presionaron 4 teclas
+                      00403             ;EI_ARR debería de estar en 4
+                      00404                    
+025B   0830           00405 CHECAR      movfw       EI_ARR
+025C   3C04           00406             sublw       0x04
+025D   1D03           00407             btfss       STATUS,Z                ;si es 0->comparar arrays
+025E   2???           00408             goto        LOOP2                   ;no->continua   
+                      00409                             
+                      00410             ;aquí es donde comparo ARR_C0 y ARR_U
+025F   2???           00411             call        COMPARAR_ARRAY
+0260   1C36           00412             btfss       FLAGS,0         
+0261   2???           00413             goto        SHOW_ERROR
+                      00414                     
+                      00415         ;contraseña correcta
+0262   2???           00416             call        PIN_OK
+0263   2???           00417             goto        WT_0
+                      00418         
+                      00419         ;contraseña incorrecta
+0264                  00420 SHOW_ERROR          
+0264   2???           00421             call        PIN_MAL
+0265   0BB8           00422             decfsz      VIDAS,f
+0266   2???           00423             goto        PASS             ;aun tiene vidas
+                      00424                     
+                      00425         ;contraseña incorrecta 3 veces             
+0267   2???           00426             call        INCORRECTO_3
+                      00427 
+                      00428         ;esperar a recibir comando 'H' para reiniciar
+0268   2???           00429             call        DESBLOQUEAR
+0269   2???           00430             goto        WT_0
+                      00431 
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 28
+
+
+LOC  OBJECT CODE     LINE SOURCE TEXT
+  VALUE
+
+                      00432         ;reiniciar para seguir revisando teclado
+                      00433 
+026A   01B0           00434 PASS        clrf        EI_ARR
+                      00435             msg_cte     0xC0,NADA
+                          M             
+                          M ;0x80: primera fila
+                          M ;0xC0:segunda fila
+                          M             
+                          M ;va a desplegar un mensaje constante, dada la tabla que contiene los caracteres
+                          M ;después de despleagrlo, se va a la primera posicion de segunda fila
+                          M             
+                          M ;DATO es una variable definida en el main
+  0000                    M             local   LAZO
+  0000                    M             local   FINMEN
+                          M             
+                          M             ;call       BORRA_Y_HOME
+026B   30C0               M             movlw       0xC0
+026C   2???               M             call        LCD_REG
+                          M             
+026D   3000               M             movlw       0x00            ; Despliega mensaje
+026E   00A0               M             movwf       DATO
+026F   2???               M LAZO        call        NADA
+0270   3800               M             iorlw       0x00
+0271   1903               M             btfsc       STATUS,Z
+0272   2???               M             goto        FINMEN
+0273   2???               M             call        LCD_DATO
+0274   0AA0               M             incf        DATO,F
+0275   2???               M             goto        LAZO
+                          M 
+0276   30C0               M FINMEN      movlw       0xC0            ; Primera posición de segunda fila
+0277   2???               M             call        LCD_REG
+                          M             
+                      00436                             
+0278   307D           00437 LOOP2       movlw       0x7D            ; Retardo 20 ms.
+0279   00A1           00438             movwf       T_DELAY
+027A   2???           00439             call        DELAY
+027B   2???           00440             goto        LOOP1                   
+                      00441 
+3F72                  00442             END                                 ; directiva 'fin del programa'
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 29
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+ACEPTADO                          000000CC
+ACKDT                             00000005
+ACKEN                             00000004
+ACKSTAT                           00000006
+ACTIVADA                          0000021D
+ADCON0                            0000001F
+ADCON1                            0000009F
+ADCS0                             00000006
+ADCS1                             00000007
+ADCS2                             00000006
+ADDEN                             00000003
+ADFM                              00000007
+ADIE                              00000006
+ADIF                              00000006
+ADON                              00000000
+ADRESH                            0000001E
+ADRESL                            0000009E
+APAGA                             000001AD
+ARR_C0                            00000045
+ARR_C1                            00000046
+ARR_C2                            00000047
+ARR_C3                            00000048
+ARR_U                             00000055
+BARRE1                            00000078
+BARREFIN                          0000008F
+BARRIDO                           00000027
+BCLIE                             00000003
+BCLIF                             00000003
+BF                                00000000
+BLOCK                             000000F4
+BORRA_Y_HOME                      0000003C
+BRGH                              00000002
+C                                 00000000
+C1INV                             00000004
+C1OUT                             00000006
+C2INV                             00000005
+C2OUT                             00000007
+CCP1CON                           00000017
+CCP1IE                            00000002
+CCP1IF                            00000002
+CCP1M0                            00000000
+CCP1M1                            00000001
+CCP1M2                            00000002
+CCP1M3                            00000003
+CCP1X                             00000005
+CCP1Y                             00000004
+CCP2CON                           0000001D
+CCP2IE                            00000000
+CCP2IF                            00000000
+CCP2M0                            00000000
+CCP2M1                            00000001
+CCP2M2                            00000002
+CCP2M3                            00000003
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 30
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+CCP2X                             00000005
+CCP2Y                             00000004
+CCPR1                             00000015
+CCPR1H                            00000016
+CCPR1L                            00000015
+CCPR2                             0000001B
+CCPR2H                            0000001C
+CCPR2L                            0000001B
+CHECAR                            0000025B
+CHS0                              00000003
+CHS1                              00000004
+CHS2                              00000005
+CIS                               00000003
+CKE                               00000006
+CKP                               00000004
+CLR_PTR                           clrf        EI_ARR
+CM0                               00000000
+CM1                               00000001
+CM2                               00000002
+CMCON                             0000009C
+CMIE                              00000006
+CMIF                              00000006
+CODIGO                            000000C4
+COMPARAR_ARRAY                    00000118
+CONTDEL                           00000039
+CONTINUA                          000001AE
+CONTT                             00000029
+CREN                              00000004
+CSRC                              00000007
+CVR0                              00000000
+CVR1                              00000001
+CVR2                              00000002
+CVR3                              00000003
+CVRCON                            0000009D
+CVREN                             00000007
+CVROE                             00000006
+CVRR                              00000005
+D                                 00000005
+DATA_ADDRESS                      00000005
+DATO                              00000020
+DC                                00000001
+DEL1                              00000168
+DEL2                              00000166
+DELAY                             00000164
+DELH                              00000023
+DELL                              00000022
+DESBLOQUEAR                       000001EF
+DIFF                              00000137
+DISABLE                           bcf PORTE,2
+DISPLAY_ON_CUR_OFF                0000003F
+D_A                               00000005
+D_NOT_A                           00000005
+EEADR                             0000010D
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 31
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+EEADRH                            0000010F
+EECON1                            0000018C
+EECON2                            0000018D
+EEDATA                            0000010C
+EEDATH                            0000010E
+EEIE                              00000004
+EEIF                              00000004
+EEPGD                             00000007
+EI_ARR                            00000030
+ENABLE                            bsf PORTE,2
+ESCRIBIR                          bcf PORTE,1
+F                                 00000001
+FERR                              00000002
+FINC                              00000130
+FIN_INT                           00000183
+FIN_PIN                           000001DC
+FLAGS                             00000036
+FREC                              00000028
+FSR                               00000004
+F_INT                             00000007
+F_VIDAS                           00000001
+GCEN                              00000007
+GIE                               00000007
+GO                                00000002
+GO_DONE                           00000002
+GO_NOT_DONE                       00000002
+GranD                             0000016D
+HEX_ASCII                         000000B2
+I2C_DATA                          00000005
+I2C_READ                          00000002
+I2C_START                         00000003
+I2C_STOP                          00000004
+IBF                               00000007
+IBOV                              00000005
+IGUAL                             00000135
+IGUAL_ARR                         00000000
+INCORRECTO_3                      000001DD
+INDF                              00000000
+INICIALIZA                        00000139
+INIT_RES                          00000185
+INIT_UART                         000000FC
+INTCON                            0000000B
+INTE                              00000004
+INTEDG                            00000006
+INTER                             00000179
+INTF                              00000001
+INT_TMR0                          0000017F
+IRP                               00000007
+KBD_BARRE                         00000076
+KBD_INI                           0000006F
+KBD_LCD                           0000019A
+KBD_LIB                           000000AC
+KBD_NUM                           00000098
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 32
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+KBD_TONO                          000000A0
+KBD_VALID                         00000090
+KBD_VAR                           00000026
+KB_LC_FIN                         000001A8
+KEY_TAB                           0000004B
+LCD_BUSY                          0000000C
+LCD_DATO                          00000027
+LCD_DELAY                         00000042
+LCD_DELAY_1                       00000046
+LCD_E                             0000001F
+LCD_INI                           00000032
+LCD_REG                           0000002D
+LCD_TEMP_1                        00000025
+LCD_TEMP_2                        00000024
+LCD_VAR                           00000024
+LEER                              bsf PORTE,1
+LETRA                             00000031
+LIMITE                            00000033
+LOOP1                             00000256
+LOOP2                             00000278
+L_ARMADA                          00000007
+L_BUSY                            00000017
+L_ERROR                           00000006
+L_VIDAS                           00000004
+MATCH                             00000037
+MSG_ERROR                         000000D4
+MatchMM                           00000129
+NADA                              000000DC
+NOT_A                             00000005
+NOT_ADDRESS                       00000005
+NOT_BO                            00000000
+NOT_BOR                           00000000
+NOT_DONE                          00000002
+NOT_PD                            00000003
+NOT_POR                           00000001
+NOT_RBPU                          00000007
+NOT_RC8                           00000006
+NOT_T1SYNC                        00000002
+NOT_TO                            00000004
+NOT_TX8                           00000006
+NOT_W                             00000002
+NOT_WRITE                         00000002
+NUEVO                             000000E3
+NUEVO_PIN                         000001BA
+NUM1                              00000099
+NUMFIN                            0000009F
+OBF                               00000006
+OERR                              00000001
+OFF_COMANDO                       bsf PORTE,0
+ON_COMANDO                        bcf PORTE,0
+OPTION_REG                        00000081
+P                                 00000004
+PASS                              0000026A
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 33
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+PCFG0                             00000000
+PCFG1                             00000001
+PCFG2                             00000002
+PCFG3                             00000003
+PCL                               00000002
+PCLATH                            0000000A
+PCON                              0000008E
+PEIE                              00000006
+PEN                               00000002
+PIE1                              0000008C
+PIE2                              0000008D
+PIN_MAL                           000001F6
+PIN_OK                            0000020A
+PIR1                              0000000C
+PIR2                              0000000D
+PORTA                             00000005
+PORTB                             00000006
+PORTC                             00000007
+PORTD                             00000008
+PORTE                             00000009
+PR2                               00000092
+PS0                               00000000
+PS1                               00000001
+PS2                               00000002
+PSA                               00000003
+PSPIE                             00000007
+PSPIF                             00000007
+PSPMODE                           00000004
+R                                 00000002
+RA0                               00000000
+RA1                               00000001
+RA2                               00000002
+RA3                               00000003
+RA4                               00000004
+RA5                               00000005
+RB0                               00000000
+RB1                               00000001
+RB2                               00000002
+RB3                               00000003
+RB4                               00000004
+RB5                               00000005
+RB6                               00000006
+RB7                               00000007
+RBIE                              00000003
+RBIF                              00000000
+RC0                               00000000
+RC1                               00000001
+RC2                               00000002
+RC3                               00000003
+RC4                               00000004
+RC5                               00000005
+RC6                               00000006
+RC7                               00000007
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 34
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+RC8_9                             00000006
+RC9                               00000006
+RCD8                              00000000
+RCEN                              00000003
+RCIE                              00000005
+RCIF                              00000005
+RCREG                             0000001A
+RCSTA                             00000018
+RD                                00000000
+RD0                               00000000
+RD1                               00000001
+RD2                               00000002
+RD3                               00000003
+RD4                               00000004
+RD5                               00000005
+RD6                               00000006
+RD7                               00000007
+RE0                               00000000
+RE1                               00000001
+RE2                               00000002
+READ_WRITE                        00000002
+RP0                               00000005
+RP1                               00000006
+RSEN                              00000001
+RX9                               00000006
+RX9D                              00000000
+RX_DIS                            bcf     RCSTA,CREN
+RX_EN                             bsf     RCSTA,CREN
+RX_OERR                           00000115
+R_NOT_W                           00000002
+R_W                               00000002
+S                                 00000003
+SC_EN                             bsf     RCSTA,SPEN
+SEN                               00000000
+SERV_TMR0                         000001A9
+SHOW_ERROR                        00000264
+SIGUEMM                           0000012A
+SMP                               00000007
+SPBRG                             00000099
+SPEN                              00000007
+SREN                              00000005
+SSPADD                            00000093
+SSPBUF                            00000013
+SSPCON                            00000014
+SSPCON2                           00000091
+SSPEN                             00000005
+SSPIE                             00000003
+SSPIF                             00000003
+SSPM0                             00000000
+SSPM1                             00000001
+SSPM2                             00000002
+SSPM3                             00000003
+SSPOV                             00000006
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 35
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+SSPSTAT                           00000094
+STATUS                            00000003
+SYNC                              00000004
+T0CS                              00000005
+T0IE                              00000005
+T0IF                              00000002
+T0SE                              00000004
+T1CKPS0                           00000004
+T1CKPS1                           00000005
+T1CON                             00000010
+T1INSYNC                          00000002
+T1OSCEN                           00000003
+T1SYNC                            00000002
+T2CKPS0                           00000000
+T2CKPS1                           00000001
+T2CON                             00000012
+TECLA                             00000026
+TMR0                              00000001
+TMR0IE                            00000005
+TMR0IF                            00000002
+TMR1                              0000000E
+TMR1CS                            00000001
+TMR1H                             0000000F
+TMR1IE                            00000000
+TMR1IF                            00000000
+TMR1L                             0000000E
+TMR1ON                            00000000
+TMR2                              00000011
+TMR2IE                            00000001
+TMR2IF                            00000001
+TMR2ON                            00000002
+TONO                              0000005D
+TOUTPS0                           00000003
+TOUTPS1                           00000004
+TOUTPS2                           00000005
+TOUTPS3                           00000006
+TRIGGER                           000001B3
+TRISA                             00000085
+TRISA0                            00000000
+TRISA1                            00000001
+TRISA2                            00000002
+TRISA3                            00000003
+TRISA4                            00000004
+TRISA5                            00000005
+TRISB                             00000086
+TRISB0                            00000000
+TRISB1                            00000001
+TRISB2                            00000002
+TRISB3                            00000003
+TRISB4                            00000004
+TRISB5                            00000005
+TRISB6                            00000006
+TRISB7                            00000007
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 36
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+TRISC                             00000087
+TRISC0                            00000000
+TRISC1                            00000001
+TRISC2                            00000002
+TRISC3                            00000003
+TRISC4                            00000004
+TRISC5                            00000005
+TRISC6                            00000006
+TRISC7                            00000007
+TRISD                             00000088
+TRISD0                            00000000
+TRISD1                            00000001
+TRISD2                            00000002
+TRISD3                            00000003
+TRISD4                            00000004
+TRISD5                            00000005
+TRISD6                            00000006
+TRISD7                            00000007
+TRISE                             00000089
+TRISE0                            00000000
+TRISE1                            00000001
+TRISE2                            00000002
+TRMT                              00000001
+TX8_9                             00000006
+TX9                               00000006
+TX9D                              00000000
+TXD8                              00000000
+TXEN                              00000005
+TXIE                              00000004
+TXIF                              00000004
+TXREG                             00000019
+TXSTA                             00000098
+TX_DIS                            bcf     TXSTA,TXEN
+TX_EN                             bsf     TXSTA,TXEN
+T_DELAY                           00000021
+UA                                00000001
+UART_ENVIAR                       0000010A
+UART_RECIBIR                      0000010F
+UP_LCD                            00000005
+VAR_AUX                           00000040
+VIDAS                             00000038
+W                                 00000000
+WAIT_ARMAR                        000000EC
+WCOL                              00000007
+WLCOMPARAR                        0000011A
+WR                                00000001
+WREN                              00000002
+WRERR                             00000003
+WT_0                              00000243
+WT_ARMAR                          00000253
+WT_S2                             000001D9
+WT_S3                             000001D6
+Z                                 00000002
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 37
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+_BODEN_OFF                        00003FBF
+_BODEN_ON                         00003FFF
+_BOREN_OFF                        00003FBF
+_BOREN_ON                         00003FFF
+_CONFIG                           00002007
+_CPD_OFF                          00003FFF
+_CPD_ON                           00003EFF
+_CP_ALL                           00001FFF
+_CP_OFF                           00003FFF
+_CP_ON                            00001FFF
+_DEBUG_OFF                        00003FFF
+_DEBUG_ON                         000037FF
+_DEVID1                           00002006
+_FOSC_EXTRC                       00003FFF
+_FOSC_HS                          00003FFE
+_FOSC_LP                          00003FFC
+_FOSC_XT                          00003FFD
+_HS_OSC                           00003FFE
+_IDLOC0                           00002000
+_IDLOC1                           00002001
+_IDLOC2                           00002002
+_IDLOC3                           00002003
+_LP_OSC                           00003FFC
+_LVP_OFF                          00003F7F
+_LVP_ON                           00003FFF
+_PWRTE_OFF                        00003FFF
+_PWRTE_ON                         00003FF7
+_RC_OSC                           00003FFF
+_WDTE_OFF                         00003FFB
+_WDTE_ON                          00003FFF
+_WDT_OFF                          00003FFB
+_WDT_ON                           00003FFF
+_WRT_1FOURTH                      00003BFF
+_WRT_256                          00003DFF
+_WRT_HALF                         000039FF
+_WRT_OFF                          00003FFF
+_XT_OSC                           00003FFD
+__16F877A                         00000001
+aNUM_1                            00000034
+aNUM_2                            00000035
+bank0                             
+bank1                             
+comparar                          
+elementoI                         00000032
+main                              0000023B
+mdelay                            
+movff                             
+movlf                             
+msg_cte                           
+nueva_otra                        000001BA
+prenderX                          
+read_arr                          
+varRx                             00000042
+MPASM 5.87            ALARMATABLERO-UART.ASM   1-18-2021  22:00:45         PAGE 38
+
+
+SYMBOL TABLE
+  LABEL                             VALUE 
+
+varTx                             00000041
+write_arr                         
+wtRF                              000001EF
+wtR_pin                           000001C8
+wtT                               0000010B
+
+Errors   :     0
+Warnings :     0 reported,     0 suppressed
+Messages :    13 reported,     0 suppressed
+
+

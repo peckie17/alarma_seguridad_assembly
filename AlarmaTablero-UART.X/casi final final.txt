@@ -1,0 +1,457 @@
+;**********************************************************************
+;                                                                     *
+;    Archivo:	    Kbd_Lcd.asm                                       *
+;    Fecha:         091203                                            *
+;    Versión:	    01.0                                              *
+;                                                                     *
+;    Autor:	    OFNO                                              *
+;    Materia:       Sistemas basados en Microcontroladores            *
+;                                                                     * 
+;**********************************************************************
+;                                                                     *
+;    Archivos requeridos: p16F877A.inc                                *
+;                         LCD_CXX.ASM                                 *
+;                         KBD_CXX.ASM                                 *
+;                                                                     *
+;**********************************************************************
+;                                                                     *
+;    Notas: ya está entregable        *
+;								      *
+;**********************************************************************
+
+	list      p=16F877A            		; Indica el modelo de PIC que se usa
+						; Es una directiva de ensamblador
+	#include "p16f877a.inc"
+	#include <macros_alarma.inc>
+
+; CONFIG
+; __config 0xFF72
+; __CONFIG _HS_OSC & _WDT_OFF & _PWRTE_ON & _BODEN_ON & _LVP_OFF & _CPD_OFF & _WRT_OFF & _CP_OFF
+	
+	__CONFIG _FOSC_HS & _WDTE_OFF & _PWRTE_ON & _BOREN_ON & _LVP_OFF & _CPD_OFF & _WRT_OFF & _CP_OFF
+
+#DEFINE	CLR_PTR	    clrf	EI_ARR			;limpiar apuntador	
+;***** CONSTANTES
+IGUAL_ARR	    EQU		0			;Será el bit 0 de la bandera flag
+F_VIDAS		    EQU		1			;bit para indicar que se le acabaron las vidas
+L_ERROR		    EQU		6
+L_VIDAS		    EQU		4
+L_ARMADA	    EQU		7
+F_INT		    EQU		7
+
+	
+;***** DEFINICION DE VARIABLES
+
+DATO		    EQU		0x20			; Variable de intercambio de datos
+T_DELAY		    EQU		0x21			; Retardo de tiempo
+DELL		    EQU		0x22			; Parte baja del delay
+DELH		    EQU		0x23			; Parte alta del delay
+LCD_VAR		    EQU 	0x24			; Variables para manejo del LCD
+KBD_VAR		    EQU		0x26			; Variables para manejo del Teclado
+FREC		    EQU		0x28
+
+CONTT		    EQU		0X29
+EI_ARR		    EQU		0x30			;Contador de elementos
+LETRA		    EQU		0x31	
+
+elementoI	    EQU		0x32
+LIMITE		    EQU		0x33
+
+aNUM_1		    EQU		0x34
+aNUM_2		    EQU		0x35
+FLAGS		    EQU		0x36
+		    
+MATCH		    EQU		0x37
+VIDAS		    EQU		0x38			    ;oportinidades para poner contraseña
+CONTDEL		    EQU		0x39
+		    
+VAR_AUX		    EQU		0x40			;variable auxiliar para rutina de servicio
+
+;arreglo de contraseña, ahorita será cte
+ARR_C0		    EQU		0x45
+ARR_C1		    EQU		0x46
+ARR_C2		    EQU		0x47
+ARR_C3		    EQU		0x48
+		    
+		    
+ARR_U		    EQU		0x55			;arreglo donde se guarda la codigo ingresada por el usuario
+
+		    
+;la variable tecla es donde se guarda el valor presionado
+;**********************************************************************
+		    ORG		0x00			; vector de reset
+		    goto	main			; salta al inicio del programa
+
+		    ORG		0x04
+		    goto	INTER			; Vector de interrupción
+
+		    ORG		0x05
+
+		    INCLUDE	"lcd_cxx.asm"		; Librerias incluidas
+		    INCLUDE	"kbd_cxx.asm"
+		    INCLUDE	"mensajes_tablas.asm"
+		    
+
+;**********************************************************************
+;Tablas de datos
+
+
+		    
+
+;****COMPARAR ARRAYS->SI SON IGUALES, SE PONE FLAG,0 en 1
+;<editor-fold defaultstate="collapsed" desc="subrutina compararar arrays">
+COMPARAR_ARRAY
+	
+	
+	clrf	    MATCH	    ;limpio match	
+	clrf	    elementoI	    ;limpio comtador de elementos
+	
+WLCOMPARAR
+	
+	read_arr    ARR_C0,elementoI, aNUM_1	    ;esa cosa pone el elemento I en NUM1
+	;movff	    aNUM_1, PORTB
+	;call	    GranD
+	;call	    GranD
+	;call	    GranD
+	;call	    GranD
+	
+	read_arr   ARR_U,elementoI, aNUM_2	    ;esa cosa pone el elemento I en NUM2
+	
+	;movff	    aNUM_2, PORTB
+	;call	    GranD
+	;call	    GranD
+	;call	    GranD
+	;call	    GranD
+	
+	
+	;comparo NUM1 y NUM2->si son iguales 
+	comparar    aNUM_1, aNUM_2, MatchMM, SIGUEMM
+	
+MatchMM
+	incf	    MATCH, f
+	
+SIGUEMM	incf	    elementoI,f
+	
+	;veo si elementoI llegó al límite
+	comparar    elementoI, LIMITE, FINC, WLCOMPARAR
+						;continua otra iteración
+	;sí , ya acabé el array
+	;ahora, solo veo si los arrays son iguales
+
+FINC	comparar    MATCH, LIMITE, IGUAL, DIFF
+	
+IGUAL	bsf	    FLAGS,0
+	return
+	
+DIFF	bcf	    FLAGS,0
+	return
+;</editor-fold>
+;**********************************************************************
+; Rutina de inicialización
+;<editor-fold defaultstate="collapsed" desc="inicializacion">
+INICIALIZA	    bsf		STATUS,RP0 		;Banco 1
+		    bcf		STATUS,RP1
+		    movlw	0x06
+		    movwf	ADCON1
+		    
+		    movlw	0xFF			;configura los 6 pines de A como entrada
+		    movwf	TRISA			;para los botones
+		    bcf 	STATUS,RP0 		;Banco 0
+		    
+		    
+		    
+		    movlf	0x04, LIMITE
+		    
+		    call 	UP_LCD			; Configura el PIC para trabajar con LCD
+		    call 	LCD_INI			; Inicializa LCD
+		    call	BORRA_Y_HOME		; Borra LCD y posiciona cursor en dir. 0
+		    call 	DISPLAY_ON_CUR_OFF	; Activa display y desactiva cursor
+		    movlw 	0x80 			; Primera posición de primera fila
+		    call 	LCD_REG
+		    movlw	0x06			; Programa incremento en  dirección del
+		    call 	LCD_REG			; cursor y trabajo en modo normal
+;----
+		    ;msg_cte	0x80,NUEVO
+		    
+		    ;call	GranD
+		    ;call	GranD
+		    
+		    ;msg_cte	0x80,CODIGO
+;----		    
+		    ;movlw	0x04			; Programa incremento en  dirección del
+		    ;call 	LCD_REG			; cursor y trabajo en modo normal
+
+		    bsf		STATUS,RP0
+		    movlw	0x05
+		    movwf	OPTION_REG		; Programa preescalador
+		    movlf	0x01, TRISB
+		    ;clrf	TRISB
+		    clrf	PORTB
+		    movlw	0x80
+		    movwf	TRISC
+		    bcf		STATUS,RP0	
+		    
+		    
+		    ;inicliazar ocntraseña constante, "1272"
+		    movlf	'1', ARR_C0
+		    movlf	'2', ARR_C1
+		    movlf	'7', ARR_C2
+		    movlf	'2', ARR_C3
+		    movlf	0x6C, FREC
+		       
+		 
+		    ;solo 4 digitos,... me tengo que detener uno antes
+		    ;movlf	0x04, LIMITE
+		    
+		    call	INIT_RES 
+		    msg_cte	0x00,NUEVO
+		    ;limpiar banderas
+		    ;clrf	FLAGS
+		    ;clrf	EI_ARR			;limpiar ei_arr
+		    ;msg_cte	0x80,CODIGO
+		    ;movlf	0x03, VIDAS
+		    ;bcf		PORTB,4			; Apaga LED
+		    
+		    ;movlw	0x7F
+		    ;movwf	CONTT
+		    return
+;</editor-fold>		    
+;**********************************************************************
+;Subrutina de retardo
+;<editor-fold defaultstate="collapsed" desc="retardos">
+DELAY		    movf	T_DELAY,w
+		    movwf	DELH
+DEL2		    movlw	0xFF
+		    movwf	DELL
+DEL1		    decfsz	DELL,f
+		    goto	DEL1
+		    decfsz	DELH,f
+		    goto	DEL2
+		    return		    
+
+	
+	
+GranD	call	    DELAY
+	call	    DELAY
+	call	    DELAY
+	call	    DELAY
+	call	    DELAY
+	call	    DELAY
+	call	    DELAY
+	call	    DELAY
+	call	    DELAY
+	call	    DELAY
+	call	    DELAY
+	
+	return
+;</editor-fold>
+;**********************************************************************
+
+;<editor-fold defaultstate="collapsed" desc="Rutina de servicio">
+INTER	
+	    movwf	VAR_AUX		;guardar lo que tenía en W por si las moscas
+	
+	    btfss	INTCON,INTF
+	    goto	INT_TMR0
+	    call	TRIGGER	
+	    bcf		INTCON,INTF
+	    goto	FIN_INT
+	
+INT_TMR0    btfss	INTCON,T0IF	;TMR0 se encargarpa de hacer las señales
+	    goto	INTER
+	    call	SERV_TMR0
+	    bcf		INTCON,T0IF
+	
+FIN_INT	    movfw	VAR_AUX    
+	 
+	    retfie
+;</editor-fold>
+
+	
+
+	
+
+;<editor-fold defaultstate="collapsed" desc="init_res">
+INIT_RES    
+		    clrf	PORTB
+		    clrf	FLAGS
+		    clrf	EI_ARR			;limpiar ei_arr
+		    movlf	0x03, VIDAS
+		    ;msg_cte	0x80,CODIGO
+		    msg_cte	0xC0,NADA
+		    movlf	0x00, INTCON		;DESACTIVAR INTS
+		    
+    return
+    ;</editor-fold>
+
+	
+;-----KBD_LCD;Subrutina que maneja teclado y LCD	
+;<editor-fold defaultstate="collapsed" desc="kbd-lcd">
+KBD_LCD		    call	KBD_VALID		; Valida tecla presionada
+
+    btfss	STATUS,Z		; Verifica si la tecla fue válidada
+    goto	KB_LC_FIN		; Si tecla no válida va a LOOP2
+
+    call	KBD_NUM			; Convierte código de tecla a dato numérico
+		    
+    call	KBD_LIB			; Espera a que la tecla sea liberada
+			
+
+    call	HEX_ASCII		; Convierte valor numérico a ASCII
+		    ;-----------
+    movwf	LETRA			;aquí guardo el código ascii de la letra
+		    ;---------------
+		    ;al lcd le mandamos los codigos ascii
+		    ;se supone que el codigo ascii se guarda en w después de salir de HEX_ASCII
+		    ;aqui empiezo a guardar la tecla
+		    ;quiero primero apuntar a fsr
+		 
+		    
+		    write_arr	ARR_U, EI_ARR, LETRA	;escribo en el arreglo
+		    
+		    
+    call	LCD_DATO		; Despliega dato en LCD
+KB_LC_FIN	    return
+;</editor-fold>
+
+
+;**********************************************************************
+;Servicio de interrupción del timer
+
+;<editor-fold defaultstate="collapsed" desc="tmr0">
+SERV_TMR0	    btfsc	PORTC,0			; Verifica estado de RA3
+		    goto	APAGA
+		    bsf		PORTC,0			; RA3 = 1
+		    goto	CONTINUA
+APAGA		    bcf		PORTC,0			; RA3 = 0
+CONTINUA	    movf	FREC,W
+		    movwf	TMR0			; Carga cuenta en TMR0
+		    movlw	0xA0			;activar interrupciones
+		    movwf	INTCON
+		    
+    return;</editor-fold>
+
+		    
+		    
+;<editor-fold defaultstate="collapsed" desc="trigger">
+TRIGGER	
+    bsf	PORTB,1	;prender LED
+		
+    bsf	FLAGS,F_INT		
+	movlf	0xA0, INTCON		
+	;bsf	INTCON,INTE		;activar interrupciones de trm0
+	;movlw	0xF6	;cargo 246 a Nd
+	;movwf	Nd
+	
+    return;</editor-fold>
+
+			
+;**********************************************************************
+; Programa principal
+
+main		    call	INICIALIZA		; Rutina de inicialización
+	    	    movlf	0x03, VIDAS		;solo tengo tres vidas
+
+						    ;reiniciar cosas:vidas, flags, ptr, deplegar msg, desactivar interrupciones
+WT_0		    msg_cte	0x00,WAIT_ARMAR
+		    call	INIT_RES	    ;voy a estar en un ciclo esperando a que se arme la alarma
+		    movlf	0x00, INTCON	    ;desactivar interrupciones
+		    	    ;mensaje de espera
+		    
+WT_ARMAR	    ;bcf		PORTB,7			;apagar LED
+		    btfsc	PORTA,5
+		    goto	WT_ARMAR		;esperar a que se arme 
+		    
+		    			
+		    ;-----
+		    bsf		PORTB,7			;prender pin 7
+		    
+		    ;activar interrupcion por RB0 e GIE (NO TRM0)
+		    movlf	0x90, INTCON
+		    
+		    
+		    ;ya se armó :3,empezar a leer teclado
+		    
+LOOP1		    call	KBD_INI			; Inicializa puerto para leer teclado
+
+		    call	KBD_BARRE		; Efectua barrido de teclado
+
+		    btfss	BARRIDO,4		; Verifica si se presionó tecla
+		    goto	CHECAR			;
+				;antes era LOOP2
+		    call	KBD_LCD			; Reconoce tecla, emite tono y exhibe
+		    
+		    
+		    ;voy a checar si ya se presionaron 4 teclas
+		    ;EI_ARR debería de estar en 4
+		   
+CHECAR		    movfw	EI_ARR
+		    sublw	0x04
+		    btfss	STATUS,Z		;si es 0->comparar arrays
+		    goto	LOOP2			;no->continua   
+		  	    
+		    ;aquí es donde comparo ARR_C0 y ARR_U
+		    
+		    call	COMPARAR_ARRAY
+		   
+		    btfss	FLAGS,0
+		    goto	SHOW_ERROR
+		    
+	;contraseña correcta
+		    msg_cte	0x80,ACEPTADO
+		    ;movlf	0x03, VIDAS		;reiniciar vidas
+		    
+		    mdelay	0xFF
+		  
+		    goto	WT_0
+	
+	;contraseña incorrecta
+SHOW_ERROR	    msg_cte	0x80,MSG_ERROR
+		    mdelay	0xFF
+		    bsf		PORTB, L_ERROR		;poner a 1 el led 6... indicando error
+		    decfsz	VIDAS,f
+		    goto	PASS		    ;aun no ha llegado a las 3 oportunidades
+		    
+		    bsf		PORTB,L_VIDAS
+		    ;significa que llegó a las 3 vidas, se terminaron las oportinidades
+		    ;voy a quedarme en espera, a S3
+		   
+		    
+		    ;aqui es donde puedo esperar a recibir el código del puerto serial
+		    
+		    bsf		FLAGS, F_VIDAS	    ;poner en 1 la bandera de error
+		    ;movlf	0x3A, PORTB
+		    msg_cte	0x00, BLOCK
+;contraseña incorrecta 3 veces		    
+	;esoerar a que se prersiones S3
+	;cuando se presiones, reiniciar todo
+		    ;vidas, codigo, error
+WT_S3		    btfsc	PORTA,4
+		    
+		    goto	WT_S3
+		    ;aqui es donde espero que se lea el mensaje de uart par desactivar
+		
+		    goto	WT_0
+		    
+		    
+		    ;---
+
+PASS		    clrf	EI_ARR
+		    msg_cte	0xC0,NADA
+		    
+		    
+LOOP2		    movlw	0x7D			; Retardo 20 ms.
+		    movwf	T_DELAY
+
+		    call	DELAY
+		    
+
+		    goto	LOOP1		;reiniciar vidas		
+
+		    END					; directiva 'fin del programa'
+
+
+
+
+
+
